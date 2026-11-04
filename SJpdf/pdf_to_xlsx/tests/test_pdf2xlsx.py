@@ -5,9 +5,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
-from pdf_to_xlsx.pdf2xlsx import create_workbook, find_result_pdfs, main
+from pdf_to_xlsx.pdf2xlsx import (
+    create_workbook,
+    default_pdf_directory,
+    find_result_pdfs,
+    main,
+)
 from pdf_to_xlsx.pdf2xlsx_1Daten import PdfParseError, extract_data_from_text
 
 
@@ -146,22 +151,67 @@ class WorkbookTests(unittest.TestCase):
                 ],
             )
 
-    def test_supported_pdfs_are_found_in_archived_event_subfolders(self):
+    def test_only_supported_pdfs_in_input_folder_are_found(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             pdf_directory = Path(temporary_directory)
             event_directory = pdf_directory / "2026-09-13 Einsiedeln FCM"
             event_directory.mkdir()
+            (pdf_directory / "2027JP0373RL.pdf").touch()
             (event_directory / "2027JP0372RL.pdf").touch()
             (event_directory / "2027JP0372RL1.pdf").touch()
 
             self.assertEqual(
                 [path.name for path in find_result_pdfs(pdf_directory)],
-                ["2027JP0372RL.pdf"],
+                ["2027JP0373RL.pdf"],
+            )
+
+    def test_default_input_prefers_synced_project_when_both_have_results(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            project_root = root / "checkout" / "SJpdf"
+            project_pdf_directory = project_root / "data" / "pdf"
+            project_pdf_directory.mkdir(parents=True)
+            (project_pdf_directory / "2027JP0373RL.pdf").touch()
+            synced_pdf_directory = (
+                root / "CLOUD-DANIEL" / "SJA" / "SJpdf" / "data" / "pdf"
+            )
+            archived_event = synced_pdf_directory / "archiv" / "event"
+            archived_event.mkdir(parents=True)
+            (archived_event / "2027JP0372RL.pdf").touch()
+            (synced_pdf_directory / "2027JP0374RL.pdf").touch()
+
+            self.assertEqual(
+                default_pdf_directory(project_root, root),
+                synced_pdf_directory,
+            )
+
+    def test_default_input_falls_back_to_checkout_when_synced_has_no_results(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            project_pdf_directory = root / "checkout" / "SJpdf" / "data" / "pdf"
+            project_pdf_directory.mkdir(parents=True)
+            (project_pdf_directory / "2027JP0372RL.pdf").touch()
+            synced_pdf_directory = (
+                root / "CLOUD-DANIEL" / "SJA" / "SJpdf" / "data" / "pdf"
+            )
+            synced_pdf_directory.mkdir(parents=True)
+
+            self.assertEqual(
+                default_pdf_directory(root / "checkout" / "SJpdf", root),
+                project_pdf_directory,
             )
 
     def test_workbook_uses_pdf_columns_and_date_format(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_file = Path(temporary_directory) / "results.xlsx"
+            workbook = Workbook()
+            workbook.active.title = "Daten"
+            workbook["Daten"]["A1"] = "existing field"
+            workbook["Daten"]["B1"] = "old PDF"
+            workbook.create_sheet("Old results")
+            workbook.save(output_file)
+            workbook.close()
+
             source_pdf = Path(temporary_directory) / "2027JP0276RLT.pdf"
 
             from unittest.mock import patch
@@ -173,6 +223,7 @@ class WorkbookTests(unittest.TestCase):
                 create_workbook([source_pdf], output_file)
 
             workbook = load_workbook(output_file, data_only=True)
+            self.assertEqual(workbook.sheetnames, ["Daten"])
             worksheet = workbook["Daten"]
             self.assertEqual(worksheet["A1"].value, "pdf")
             self.assertEqual(worksheet["B1"].value, "2027JP0276RLT")
@@ -180,6 +231,72 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(worksheet["B2"].value, "FIS SKI JUMPING GRAND PRIX")
             self.assertEqual(worksheet["A4"].value, "Datum")
             self.assertEqual(worksheet["B4"].number_format, "yyyy-mm-dd")
+            self.assertEqual(worksheet.max_column, 2)
+            workbook.close()
+
+    def test_no_matching_pdfs_still_clears_old_sheets_and_columns(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_file = Path(temporary_directory) / "results.xlsx"
+            workbook = Workbook()
+            workbook.active.title = "Daten"
+            workbook["Daten"]["A1"] = "keep"
+            workbook["Daten"]["B1"] = "remove"
+            workbook.create_sheet("Old results")
+            workbook.save(output_file)
+            workbook.close()
+
+            with self.assertRaises(FileNotFoundError):
+                create_workbook([], output_file)
+
+            workbook = load_workbook(output_file, data_only=True)
+            self.assertEqual(workbook.sheetnames, ["Daten"])
+            self.assertEqual(workbook["Daten"]["A1"].value, "keep")
+            self.assertEqual(workbook["Daten"].max_column, 1)
+            workbook.close()
+
+    def test_unavailable_fields_have_light_red_background(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_file = Path(temporary_directory) / "results.xlsx"
+            source_pdf = Path(temporary_directory) / "2027JP0276RLT.pdf"
+
+            with patch(
+                "pdf_to_xlsx.pdf2xlsx.extract_data",
+                return_value={"Titel": "FIS SKI JUMPING GRAND PRIX"},
+            ):
+                create_workbook([source_pdf], output_file)
+
+            workbook = load_workbook(output_file)
+            worksheet = workbook["Daten"]
+            self.assertEqual(worksheet["B2"].value, "FIS SKI JUMPING GRAND PRIX")
+            self.assertIsNone(worksheet["B2"].fill.fill_type)
+            self.assertIsNone(worksheet["B3"].value)
+            self.assertEqual(worksheet["B3"].fill.fill_type, "solid")
+            self.assertEqual(worksheet["B3"].fill.fgColor.rgb, "FFFFC7CE")
+            workbook.close()
+
+    def test_startup_clears_workbook_before_input_directory_check(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_file = root / "results.xlsx"
+            workbook = Workbook()
+            workbook.active.title = "Daten"
+            workbook["Daten"]["A1"] = "keep"
+            workbook["Daten"]["B1"] = "remove"
+            workbook.create_sheet("Old results")
+            workbook.save(output_file)
+            workbook.close()
+            error_output = StringIO()
+
+            with patch("pdf_to_xlsx.pdf2xlsx.sys.stderr", error_output):
+                result = main(
+                    ["--pdf-dir", str(root / "missing"), "--output", str(output_file)]
+                )
+
+            self.assertEqual(result, 1)
+            workbook = load_workbook(output_file, data_only=True)
+            self.assertEqual(workbook.sheetnames, ["Daten"])
+            self.assertEqual(workbook["Daten"]["A1"].value, "keep")
+            self.assertEqual(workbook["Daten"].max_column, 1)
             workbook.close()
 
     def test_locked_output_reports_how_to_fix_permission_error(self):
