@@ -18,6 +18,12 @@ SPEC.loader.exec_module(downloader)
 
 
 class PdfDownloadTests(unittest.TestCase):
+    def test_default_pdf_directory_is_in_project_data(self):
+        self.assertEqual(
+            downloader.PDF_DIRECTORY,
+            downloader.PROJECT_ROOT / "data" / "pdf",
+        )
+
     def test_codex_is_padded_to_four_digits(self):
         self.assertEqual(downloader.normalize_codex("29"), "0029")
         self.assertEqual(downloader.normalize_codex("279"), "0279")

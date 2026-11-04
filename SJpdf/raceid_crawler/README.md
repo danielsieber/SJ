@@ -2,8 +2,8 @@
 
 Der Crawler liest den FIS-Kalender für Skispringen (`sectorcode=JP`) einer
 Saison, öffnet die Detailseiten der Veranstaltungen und speichert die
-Wettkämpfe in `data/raceid/raceid.xlsx`. PDFs können unter `data/pdf` abgelegt
-werden. Standardmäßig wird Saison 2027 verwendet.
+Wettkämpfe im Projektordner `SJpdf/data/raceid/raceid.xlsx`. PDFs können unter
+`SJpdf/data/pdf` abgelegt werden. Standardmäßig wird Saison 2027 verwendet.
 
 Die FIS verwendet zwei unterschiedliche IDs:
 

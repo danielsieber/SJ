@@ -18,7 +18,7 @@ else:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PDF_DIRECTORY = PROJECT_ROOT / "data" / "pdf"
+PDF_DIRECTORY = PROJECT_ROOT / "data" / "pdf" / "archiv"
 OUTPUT_FILE = PROJECT_ROOT / "data" / "pdf_to_xlsx.xlsx"
 PDF_NAME_PATTERN = re.compile(
     r"^\d{4}JP\d{4}(?:RLT|RLQ|RTRIA|RL)\.pdf$",
@@ -31,7 +31,7 @@ def find_result_pdfs(pdf_directory: Path) -> list[Path]:
     return sorted(
         (
             path
-            for path in pdf_directory.iterdir()
+            for path in pdf_directory.rglob("*.pdf")
             if path.is_file() and PDF_NAME_PATTERN.fullmatch(path.name)
         ),
         key=lambda path: path.name.casefold(),
@@ -88,6 +88,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         pdf_paths = find_result_pdfs(args.pdf_dir)
         create_workbook(pdf_paths, args.output)
+    except PermissionError as error:
+        print(
+            f"PDF to Excel failed: Cannot write '{args.output}'. "
+            "Close the workbook in Excel if it is open, then try again. "
+            f"Also check that you have permission to write to the folder. ({error})",
+            file=sys.stderr,
+        )
+        return 1
     except (FileNotFoundError, OSError, PdfParseError) as error:
         print(f"PDF to Excel failed: {error}", file=sys.stderr)
         return 1

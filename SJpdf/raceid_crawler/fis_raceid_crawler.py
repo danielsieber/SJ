@@ -21,6 +21,8 @@ DEFAULT_SEASON = 2027
 REQUEST_DELAY_SECONDS = 2
 MAX_RATE_LIMIT_RETRIES = 5
 BASE_URL = "https://www.fis-ski.com/DB"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "data" / "raceid" / "raceid.xlsx"
 HEADERS = (
     "season",
     "date",
@@ -341,7 +343,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "data" / "raceid" / "raceid.xlsx",
+        default=DEFAULT_OUTPUT_PATH,
         help="Excel-Ausgabedatei (Standard: data/raceid/raceid.xlsx im Projektordner)",
     )
     args = parser.parse_args()

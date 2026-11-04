@@ -1,7 +1,9 @@
 # FIS PDF to Excel
 
-`pdf2xlsx.bat` reads matching FIS result PDFs from `..\data\pdf` and creates
-`..\data\pdf_to_xlsx.xlsx`. Only files named like
+`pdf2xlsx.bat` reads matching FIS result PDFs recursively from
+`..\data\pdf\archiv` and creates
+`..\data\pdf_to_xlsx.xlsx`. Archived event subfolders are searched as well.
+Only files named like
 `2027JP0372RL`, `2027JP0372RLT`, `2027JP0372RLQ`, or `2027JP0372RTRIA`
 (with a `.pdf` extension) are processed. Other PDF types are ignored.
 
@@ -19,6 +21,8 @@ python -m pip install -r requirements.txt
 Run `pdf2xlsx.bat`, or call `python pdf2xlsx.py` directly. Optional
 `--pdf-dir` and `--output` arguments can be used to select another input
 folder or output workbook.
+Close the output workbook in Excel before running the converter; Excel locks
+open workbooks and prevents them from being overwritten.
 
 Run the tests from the `SJpdf` directory with:
 

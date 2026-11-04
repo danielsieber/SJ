@@ -193,13 +193,16 @@ def extract_data_from_text(text: str, pdf_name: str = "<PDF>") -> dict[str, Any]
         "TWC": None,
     }
 
-    normalized_text = " ".join(text.split())
-    hill_size_match = re.search(
-        rf"HILL\s+SIZE\s+HS\s*/\s*\(95%\)\s*{NUMBER}\s*m?\s*"
+    hill_size_pattern = re.compile(
+        rf"\bHILL\b.*?95\s*%\s*\)?\s*{NUMBER}\s*m?\s*"
         rf"\(\s*{NUMBER}\s*m?\s*\)",
-        normalized_text,
         re.I,
     )
+    hill_size_match = next(
+        (match for line in lines if (match := hill_size_pattern.search(line))),
+        None,
+    )
+    normalized_text = " ".join(text.split())
     if hill_size_match:
         values["Hill Size"] = _number(hill_size_match.group(1))
         values["HS 95%"] = _number(hill_size_match.group(2))

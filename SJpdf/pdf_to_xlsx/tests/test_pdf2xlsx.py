@@ -1,11 +1,13 @@
 from datetime import date
+from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from openpyxl import load_workbook
 
-from pdf_to_xlsx.pdf2xlsx import create_workbook, find_result_pdfs
+from pdf_to_xlsx.pdf2xlsx import create_workbook, find_result_pdfs, main
 from pdf_to_xlsx.pdf2xlsx_1Daten import PdfParseError, extract_data_from_text
 
 
@@ -81,6 +83,32 @@ class ExtractDataTests(unittest.TestCase):
         self.assertEqual(values["Gender"], "MEN")
         self.assertEqual(values["Rangliste"], "INTERMEDIATE RESULTS 1ST ROUND")
 
+    def test_hill_size_without_hs_label_and_with_hyphen(self):
+        values = extract_data_from_text(FIS_CUP_TEXT, "2027JP0281RL")
+
+        self.assertEqual(values["Hill Size"], 117)
+        self.assertEqual(values["HS 95%"], 111)
+
+    def test_hill_size_with_original_label_format(self):
+        text = FIS_CUP_TEXT.replace(
+            "HILL-SIZE / (95%)",
+            "HILL SIZE HS / (95%)",
+        )
+        values = extract_data_from_text(text, "2027JP0281RL")
+
+        self.assertEqual(values["Hill Size"], 117)
+        self.assertEqual(values["HS 95%"], 111)
+
+    def test_hill_size_label_can_vary_between_hill_and_95_percent(self):
+        text = FIS_CUP_TEXT.replace(
+            "HILL-SIZE / (95%)",
+            "HILL DIMENSION / (95%)",
+        )
+        values = extract_data_from_text(text, "2027JP0281RL")
+
+        self.assertEqual(values["Hill Size"], 117)
+        self.assertEqual(values["HS 95%"], 111)
+
     def test_missing_optional_fields_are_blank(self):
         values = extract_data_from_text(
             "FIS SKI JUMPING GRAND PRIX\nResults Qualification\n"
@@ -118,6 +146,19 @@ class WorkbookTests(unittest.TestCase):
                 ],
             )
 
+    def test_supported_pdfs_are_found_in_archived_event_subfolders(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pdf_directory = Path(temporary_directory)
+            event_directory = pdf_directory / "2026-09-13 Einsiedeln FCM"
+            event_directory.mkdir()
+            (event_directory / "2027JP0372RL.pdf").touch()
+            (event_directory / "2027JP0372RL1.pdf").touch()
+
+            self.assertEqual(
+                [path.name for path in find_result_pdfs(pdf_directory)],
+                ["2027JP0372RL.pdf"],
+            )
+
     def test_workbook_uses_pdf_columns_and_date_format(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_file = Path(temporary_directory) / "results.xlsx"
@@ -140,6 +181,22 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(worksheet["A4"].value, "Datum")
             self.assertEqual(worksheet["B4"].number_format, "yyyy-mm-dd")
             workbook.close()
+
+    def test_locked_output_reports_how_to_fix_permission_error(self):
+        error_output = StringIO()
+        with (
+            patch("pdf_to_xlsx.pdf2xlsx.find_result_pdfs", return_value=[Path("sample.pdf")]),
+            patch(
+                "pdf_to_xlsx.pdf2xlsx.create_workbook",
+                side_effect=PermissionError(13, "Permission denied"),
+            ),
+            patch("pdf_to_xlsx.pdf2xlsx.sys.stderr", error_output),
+        ):
+            result = main(["--pdf-dir", ".", "--output", "locked.xlsx"])
+
+        self.assertEqual(result, 1)
+        self.assertIn("Close the workbook in Excel", error_output.getvalue())
+        self.assertIn("locked.xlsx", error_output.getvalue())
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 from openpyxl import load_workbook
 
 from fis_raceid_crawler import (
+    DEFAULT_OUTPUT_PATH,
     HEADERS,
     _calendar_events,
     _competition_rows,
@@ -20,6 +21,12 @@ from fis_raceid_crawler import (
 
 
 class FisCrawlerTests(unittest.TestCase):
+    def test_default_output_is_in_sjpdf_project_data(self):
+        self.assertEqual(
+            DEFAULT_OUTPUT_PATH,
+            Path(__file__).resolve().parents[2] / "data" / "raceid" / "raceid.xlsx",
+        )
+
     def test_calendar_events_extract_event_id_and_place(self):
         html = """
         <div id="calendardata">
