@@ -13,7 +13,7 @@ from pdf_to_xlsx.pdf2xlsx import (
     find_result_pdfs,
     main,
 )
-from pdf_to_xlsx.pdf2xlsx_1Daten import PdfParseError, extract_data_from_text
+from pdf_to_xlsx.pdf2xlsx_Daten import PdfParseError, extract_data_from_text
 
 
 SAMPLE_TEXT = """\
@@ -39,6 +39,29 @@ Hill Data / Calculation
 HILL-SIZE / (95%)                                         117m (111m)                                 GATE FACTOR                                                    6.32 points per m
 K-POINT                                                    105m                             WIND FACTORS - HEAD / TAIL                            7.29 / 10.94 points per m/s
 METER VALUE                                                        1.8 points per m
+"""
+
+INFORMATION_TEXT = """\
+Competition / Weather Information
+1st Round 16:00 - 16:48 0.00 12 85.64m sunny 18 0 57 -0.74 0.31 1.87
+Second Round 17:08 - 17:30 0.00 13 86.34m sunny 18 0 56 -1.13 -0.08 0.46
+3rd Round 18:00 - 18:20 -0.10 14 87.12m cloudy 10 -1 52 -0.60 0.20 0.90
+Statistics
+23 OCT 2026 / Klingenthal (GER) / 276
+Data Service by Swiss Timing
+"""
+
+TRIAL_INFORMATION_TEXT = """\
+Competition / Weather Information
+Trial Round 14:30 - 15:24 0.00 10 85.64m sunny 18 0 59 -0.82 0.88 2.10
+Statistics
+"""
+
+EWOXX_FOOTER_TEXT = """\
+12 SEP 2026 / Einsiedeln (SUI) / 281
+Timing and Data Service by EWOXX
+fis-ski.com
+------------------------------_73C1 v1.0 Report Created SAT 12 SEP 2026 15:24 Page 2 / 2
 """
 
 
@@ -125,6 +148,49 @@ class ExtractDataTests(unittest.TestCase):
     def test_missing_title_is_reported(self):
         with self.assertRaises(PdfParseError):
             extract_data_from_text("No result data")
+
+    def test_extracts_information_and_footer(self):
+        values = extract_data_from_text(SAMPLE_TEXT + INFORMATION_TEXT)
+
+        self.assertEqual(values["DG 1"], "1st Round")
+        self.assertEqual(values["Start Time 1"], "16:00")
+        self.assertEqual(values["End Time 1"], "16:48")
+        self.assertEqual(values["Wind 1"], 0)
+        self.assertEqual(values["Base Gate 1"], 12)
+        self.assertEqual(values["Length 1"], 85.64)
+        self.assertEqual(values["Wheater 1"], "sunny")
+        self.assertEqual(values["Temp Air 1"], 18)
+        self.assertEqual(values["Temp Track 1"], 0)
+        self.assertEqual(values["Humidity 1"], 57)
+        self.assertEqual(values["DG 2"], "Second Round")
+        self.assertEqual(values["Length 2"], 86.34)
+        self.assertEqual(values["DG 3"], "3rd Round")
+        self.assertEqual(values["Wind 3"], -0.1)
+        self.assertEqual(values["Length 3"], 87.12)
+        self.assertEqual(values["Footer Datum"], "23 OCT 2026")
+        self.assertEqual(values["Footer Ort"], "Klingenthal (GER)")
+        self.assertEqual(values["Footer Codex"], "276")
+
+    def test_extracts_trial_round_information(self):
+        values = extract_data_from_text(SAMPLE_TEXT + TRIAL_INFORMATION_TEXT)
+
+        self.assertEqual(values["DG 1"], "Trial Round")
+        self.assertEqual(values["Start Time 1"], "14:30")
+        self.assertEqual(values["End Time 1"], "15:24")
+        self.assertEqual(values["Wind 1"], 0)
+        self.assertEqual(values["Base Gate 1"], 10)
+        self.assertEqual(values["Length 1"], 85.64)
+        self.assertEqual(values["Wheater 1"], "sunny")
+        self.assertEqual(values["Temp Air 1"], 18)
+        self.assertEqual(values["Temp Track 1"], 0)
+        self.assertEqual(values["Humidity 1"], 59)
+
+    def test_extracts_ewoxx_footer_format(self):
+        values = extract_data_from_text(SAMPLE_TEXT + EWOXX_FOOTER_TEXT)
+
+        self.assertEqual(values["Footer Datum"], "12 SEP 2026")
+        self.assertEqual(values["Footer Ort"], "Einsiedeln (SUI)")
+        self.assertEqual(values["Footer Codex"], "281")
 
 
 class WorkbookTests(unittest.TestCase):
@@ -231,7 +297,47 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(worksheet["B2"].value, "FIS SKI JUMPING GRAND PRIX")
             self.assertEqual(worksheet["A4"].value, "Datum")
             self.assertEqual(worksheet["B4"].number_format, "yyyy-mm-dd")
+            self.assertEqual(worksheet["A19"].value, "DG 1")
+            self.assertEqual(worksheet["A24"].value, "Length 1")
+            self.assertEqual(worksheet["A49"].value, "Footer Datum")
+            self.assertEqual(worksheet["A51"].value, "Footer Codex")
+            self.assertEqual(worksheet["A1"].alignment.horizontal, "left")
+            self.assertEqual(worksheet["B4"].alignment.horizontal, "left")
+            self.assertEqual(worksheet["A11"].font.color.rgb, "FF0000FF")
+            self.assertEqual(worksheet["B11"].font.color.rgb, "FF0000FF")
+            self.assertEqual(worksheet.freeze_panes, "B12")
+            for row in (19, 29, 39, 49):
+                self.assertEqual(worksheet.cell(row=row, column=1).fill.fgColor.rgb, "FFD9D9D9")
             self.assertEqual(worksheet.max_column, 2)
+            workbook.close()
+
+    def test_pdf_columns_are_sorted_by_date_and_start_time(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_file = Path(temporary_directory) / "results.xlsx"
+            source_pdfs = [
+                Path(temporary_directory) / "later.pdf",
+                Path(temporary_directory) / "earlier-time.pdf",
+                Path(temporary_directory) / "earlier-date.pdf",
+                Path(temporary_directory) / "missing-date.pdf",
+            ]
+            values_by_name = {
+                "later.pdf": {"Datum": date(2026, 9, 12), "Start Time": "16:00"},
+                "earlier-time.pdf": {"Datum": date(2026, 9, 12), "Start Time": "08:30"},
+                "earlier-date.pdf": {"Datum": date(2026, 9, 11), "Start Time": "20:00"},
+                "missing-date.pdf": {"Datum": None, "Start Time": "07:00"},
+            }
+
+            with patch(
+                "pdf_to_xlsx.pdf2xlsx.extract_data",
+                side_effect=lambda path: values_by_name[path.name],
+            ):
+                create_workbook(source_pdfs, output_file)
+
+            workbook = load_workbook(output_file, data_only=True)
+            self.assertEqual(
+                [workbook["Daten"].cell(row=1, column=column).value for column in range(2, 6)],
+                ["earlier-date", "earlier-time", "later", "missing-date"],
+            )
             workbook.close()
 
     def test_no_matching_pdfs_still_clears_old_sheets_and_columns(self):

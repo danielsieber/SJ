@@ -9,12 +9,15 @@ Only files named like
 `2027JP0372RL`, `2027JP0372RLT`, `2027JP0372RLQ`, or `2027JP0372RTRIA`
 (with a `.pdf` extension) are processed. Other PDF types are ignored.
 
-The workbook contains the sheet `Daten`. Each supported PDF has its own column;
-the first column contains the field names for block 1 (title, event details,
-results heading, and Hill Data). The date is stored as an Excel date and
-displayed as `yyyy-mm-dd`. Unavailable individual fields are left blank with a
-light red background. Each run removes all other sheets and clears every
-column after column A in `Daten` before writing the current results.
+The workbook contains the sheet `Daten`. Each supported PDF has its own column.
+The first column contains general competition data, competition/weather
+information for up to three rounds (including length), and the last-page
+footer date, place, and codex. The competition information is written from
+row 19; footer fields follow it at rows 49-51. The event date is stored as an
+Excel date and displayed as `yyyy-mm-dd`. Unavailable individual fields are
+left blank with a light red background. Each run removes all other sheets and
+clears every column after column A in `Daten` before writing the current
+results.
 
 Install dependencies from this directory with:
 

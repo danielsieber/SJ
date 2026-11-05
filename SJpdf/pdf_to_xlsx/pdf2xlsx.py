@@ -1,20 +1,21 @@
-"""Create an Excel overview of the general-data block in FIS result PDFs."""
+"""Create an Excel overview of data blocks in FIS result PDFs."""
 
 from __future__ import annotations
 
 import argparse
+from copy import copy
 import re
 import sys
 from pathlib import Path
 from typing import Sequence
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 
 if __package__:
-    from .pdf2xlsx_1Daten import DATA_ROWS, PdfParseError, extract_data
+    from .pdf2xlsx_Daten import DATA_ROWS, PdfParseError, extract_data
 else:
-    from pdf2xlsx_1Daten import DATA_ROWS, PdfParseError, extract_data
+    from pdf2xlsx_Daten import DATA_ROWS, PdfParseError, extract_data
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,9 @@ UNAVAILABLE_FIELD_FILL = PatternFill(
     fill_type="solid",
     fgColor="FFFFC7CE",
 )
+SECTION_FILL = PatternFill(fill_type="solid", fgColor="FFD9D9D9")
+RANGLISTE_FONT_COLOR = "FF0000FF"
+GRAY_ROWS = (19, 29, 39, 49)
 
 
 def default_pdf_directory(
@@ -85,6 +89,22 @@ def reset_workbook(output_file: Path) -> None:
         workbook.close()
 
 
+def _sort_key(values: dict[str, object]) -> tuple[bool, int, bool, int]:
+    competition_date = values.get("Datum")
+    date_missing = competition_date is None
+    date_order = competition_date.toordinal() if hasattr(competition_date, "toordinal") else 0
+
+    start_time = values.get("Start Time")
+    time_match = re.fullmatch(r"(\d{1,2}):(\d{2})", str(start_time or ""))
+    time_missing = time_match is None
+    time_order = (
+        int(time_match.group(1)) * 60 + int(time_match.group(2))
+        if time_match
+        else 0
+    )
+    return date_missing, date_order, time_missing, time_order
+
+
 def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
     """Extract each PDF once and save the selected fields in separate columns."""
     reset_workbook(output_file)
@@ -97,9 +117,14 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
     try:
         worksheet["A1"] = "pdf"
 
-        for column, pdf_path in enumerate(pdf_paths, start=2):
+        extracted = [
+            (pdf_path, extract_data(pdf_path))
+            for pdf_path in pdf_paths
+        ]
+        extracted.sort(key=lambda item: _sort_key(item[1]))
+
+        for column, (pdf_path, values) in enumerate(extracted, start=2):
             worksheet.cell(row=1, column=column, value=pdf_path.stem)
-            values = extract_data(pdf_path)
             for row, key in enumerate(DATA_ROWS, start=2):
                 cell = worksheet.cell(row=row, column=1, value=key)
                 cell.font = Font(bold=True)
@@ -110,6 +135,23 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
                 if key == "Datum" and value is not None:
                     value_cell.number_format = "yyyy-mm-dd"
 
+        for row in range(1, worksheet.max_row + 1):
+            for column in range(1, worksheet.max_column + 1):
+                worksheet.cell(row=row, column=column).alignment = Alignment(
+                    horizontal="left"
+                )
+
+        rangliste_row = DATA_ROWS.index("Rangliste") + 2
+        for cell in worksheet[rangliste_row]:
+            font = copy(cell.font)
+            font.color = RANGLISTE_FONT_COLOR
+            cell.font = font
+
+        for row in GRAY_ROWS:
+            for cell in worksheet[row]:
+                cell.fill = SECTION_FILL
+
+        worksheet.freeze_panes = "B12"
         worksheet.column_dimensions["A"].width = 20
         for column in range(2, len(pdf_paths) + 2):
             worksheet.column_dimensions[
@@ -123,7 +165,7 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Extract the general-data block from FIS result PDFs."
+        description="Extract data blocks from FIS result PDFs."
     )
     parser.add_argument(
         "--pdf-dir",
