@@ -3,6 +3,8 @@ import time
 import os
 from pathlib import Path
 
+from src.config import find_web_root, fis_root_directory
+
 from src.pipeline.phase_20_preprocessing import (
     main_analysis,
     repair_data,
@@ -40,7 +42,7 @@ def main():
     start_time = time.time()
     
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
-    root_dir = repo_root
+    root_dir = fis_root_directory(repo_root)
     print("Root Directory root_dir:  ", root_dir)
 
     # *****     start MODUL 20     *****     import raw data    ************************
@@ -71,7 +73,7 @@ def main():
             fol_cleandata,
             output_filename,
             output_path,
-            pdf_output_path=root_dir / "Data_pdf",
+            pdf_output_path=(find_web_root()[0] or root_dir) / "Data_pdf",
         )
         # *****     end MODUL 28     ******************************************************
 

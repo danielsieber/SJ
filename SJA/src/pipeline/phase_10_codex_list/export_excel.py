@@ -11,10 +11,16 @@ from src.pipeline.phase_10_codex_list.group_weekends import group_and_sort_by_we
 
 def get_scraper_files():
     """Reads files from a path and returns them as a list of dictionaries."""
-    current_dir = Path(__file__).resolve().parent
-    # Navigate from src/pipeline/phase_10_codex_list/ up to repo root, then into data/Data_FIS
-    repo_root = current_dir.parent.parent.parent
-    FOLDER_Data_FIS = str(repo_root / "data" / "Data_FIS")
+    from src.config import find_web_root
+
+    web_root, _ = find_web_root()
+    if web_root is not None:
+        # Data_FIS liegt im Web-Ordner (wie in der Streamlit-App)
+        FOLDER_Data_FIS = str(web_root / "Data_FIS")
+    else:
+        # Fallback: data/Data_FIS im Repo
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        FOLDER_Data_FIS = str(repo_root / "data" / "Data_FIS")
         
     print()
     print(f"_10-01 Lese Dateien aus: {FOLDER_Data_FIS}")

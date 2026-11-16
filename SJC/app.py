@@ -4,9 +4,33 @@ import os
 from dash import Dash, Input, Output, ctx, dcc, html
 
 
-REVIEW_FOLDER = Path(
-    os.environ.get("SJC_REVIEW_FOLDER", Path.home() / "SJA" / "Review")
-)
+REVIEW_RELATIVE_PATH = Path("CLOUD-DANIEL", "SJA", "Review")
+
+
+def find_review_folder(environ=None, home_directory=None, drive_root=None):
+    r"""
+    SJC_REVIEW_FOLDER, then C:\CLOUD-DANIEL\SJA\Review (Desktop), then
+    %USERPROFILE%\CLOUD-DANIEL\SJA\Review (Laptop), then ~/SJA/Review.
+    """
+    environ = os.environ if environ is None else environ
+    home_directory = Path.home() if home_directory is None else Path(home_directory)
+    drive_root = Path(home_directory.anchor) if drive_root is None else Path(drive_root)
+
+    configured = environ.get("SJC_REVIEW_FOLDER", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    candidates = [
+        drive_root / REVIEW_RELATIVE_PATH,
+        home_directory / REVIEW_RELATIVE_PATH,
+        home_directory / "SJA" / "Review",
+    ]
+    for folder in candidates:
+        if folder.is_dir():
+            return folder
+    return candidates[0]
+
+
+REVIEW_FOLDER = find_review_folder()
 CHARTS = [
     ("nuts", "Nuts"),
     ("dgw1", "DGW1"),

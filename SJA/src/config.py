@@ -87,35 +87,52 @@ def load_reference_lists(listen_file):
     return list_schanzen_id, list_springer_id
 
 
+WEB_ROOT_RELATIVE_PATH = Path("CLOUD-DANIEL", "Family", "Sport", "FIS", "Web")
+
+
+def web_root_candidates(environ=None, home_directory=None, drive_root=None):
+    """
+    Returns (label, path) pairs for the FIS Web folder in search order:
+    SJA_WEB_ROOT, C:\\CLOUD-DANIEL\\... (Desktop), %USERPROFILE%\\CLOUD-DANIEL\\... (Laptop).
+    """
+    environ = os.environ if environ is None else environ
+    home_directory = Path.home() if home_directory is None else Path(home_directory)
+    drive_root = Path(home_directory.anchor) if drive_root is None else Path(drive_root)
+
+    candidates = []
+    configured_root = environ.get("SJA_WEB_ROOT", "").strip()
+    if configured_root:
+        candidates.append(("SJA_WEB_ROOT", Path(configured_root).expanduser()))
+    candidates.append(("CLOUD-DANIEL (Laufwerk)", drive_root / WEB_ROOT_RELATIVE_PATH))
+    candidates.append(("CLOUD-DANIEL (Benutzerordner)", home_directory / WEB_ROOT_RELATIVE_PATH))
+    return candidates
+
+
+def find_web_root(environ=None, home_directory=None, drive_root=None):
+    """Returns (path, label) of the first existing FIS Web folder, or (None, "None")."""
+    for label, path in web_root_candidates(environ, home_directory, drive_root):
+        if path.is_dir():
+            return path, label
+    return None, "None"
+
+
+def fis_root_directory(fallback):
+    """Returns the FIS folder (parent of Web) holding Liste_Codex.xlsx and Data_FIS."""
+    web_root, _ = find_web_root()
+    return web_root.parent if web_root is not None else Path(fallback)
+
+
 @st.cache_data
 def init_paths():
     """
-    Uses SJA_WEB_ROOT when configured and returns the derived data folders.
+    Finds the FIS Web folder (see web_root_candidates) and returns the
+    derived data folders.
     """
-    configured_root = os.environ.get("SJA_WEB_ROOT")
-    candidates = {"SJA_WEB_ROOT": configured_root} if configured_root else {}
-    
-    path_basic = None
-    found_key = None
-    
-    for key, path_str in candidates.items():
-        p = Path(path_str)
-        if p.exists() and p.is_dir():
-            path_basic = p
-            found_key = key
-            break
-            
-    # Fallback-Logic, falls lokal getestet wird und Pfade nicht existieren
+    path_basic, found_key = find_web_root()
+
     if not path_basic:
-        # Versuche relativen Pfad
-        fallback_path = Path(__file__).parent.parent / "Family" / "Sport" / "FIS" / "Web"
-        if fallback_path.exists():
-            path_basic = fallback_path
-            found_key = "Fallback-Relative"
-        else:
-            # Zeige Fehler in der App und erstelle Scheinstruktur für den lokalen Start
-            path_basic = Path("C:/") # Platzhalter
-            found_key = "None"
+        # Zeige Fehler in der App und erstelle Scheinstruktur für den lokalen Start
+        path_basic = Path("C:/") # Platzhalter
             
     # Abgeleitete Pfade (..\\Data_FIS und ..\\Data_Weekend)
     if found_key != "None":
