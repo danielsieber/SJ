@@ -185,6 +185,19 @@ class ExtractDataTests(unittest.TestCase):
         self.assertEqual(values["Temp Track 1"], 0)
         self.assertEqual(values["Humidity 1"], 59)
 
+    def test_trial_round_does_not_overwrite_first_round(self):
+        text = SAMPLE_TEXT + """\
+Competition / Weather Information
+1st Round 16:00 - 16:48 0.00 12 85.64m sunny 18 0 57 -0.74 0.31 1.87
+Trial Round 14:30 - 15:24 0.00 10 84.10m sunny 18 0 59 -0.82 0.88 2.10
+Statistics
+"""
+        values = extract_data_from_text(text)
+
+        self.assertEqual(values["DG 1"], "1st Round")
+        self.assertEqual(values["Start Time 1"], "16:00")
+        self.assertEqual(values["Base Gate 1"], 12)
+
     def test_extracts_ewoxx_footer_format(self):
         values = extract_data_from_text(SAMPLE_TEXT + EWOXX_FOOTER_TEXT)
 
@@ -329,6 +342,32 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(workbook["Daten"].max_column, 1)
             workbook.close()
 
+    def test_main_saves_workbook_only_once(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_file = root / "results.xlsx"
+            pdf_dir = root / "pdf"
+            pdf_dir.mkdir()
+            (pdf_dir / "2027JP0276RLT.pdf").write_bytes(b"%PDF")
+            original_save = Workbook.save
+            saves = []
+
+            def counting_save(workbook, filename):
+                saves.append(filename)
+                original_save(workbook, filename)
+
+            with (
+                patch(
+                    "pdf_to_xlsx.pdf2xlsx.extract_data",
+                    return_value={"Titel": "FIS SKI JUMPING GRAND PRIX"},
+                ),
+                patch.object(Workbook, "save", counting_save),
+            ):
+                result = main(["--pdf-dir", str(pdf_dir), "--output", str(output_file)])
+
+            self.assertEqual(result, 0)
+            self.assertEqual(len(saves), 1)
+
     def test_unavailable_fields_have_light_red_background(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_file = Path(temporary_directory) / "results.xlsx"
@@ -377,6 +416,7 @@ class WorkbookTests(unittest.TestCase):
     def test_locked_output_reports_how_to_fix_permission_error(self):
         error_output = StringIO()
         with (
+            patch("pdf_to_xlsx.pdf2xlsx.reset_workbook"),
             patch("pdf_to_xlsx.pdf2xlsx.find_result_pdfs", return_value=[Path("sample.pdf")]),
             patch(
                 "pdf_to_xlsx.pdf2xlsx.create_workbook",

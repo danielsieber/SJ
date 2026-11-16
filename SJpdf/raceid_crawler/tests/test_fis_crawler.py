@@ -156,8 +156,8 @@ class FisCrawlerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "calendardata"):
             _calendar_events("<html><body>Unexpected page</body></html>")
 
-    @patch("fis_raceid_crawler.time.sleep")
-    @patch("fis_raceid_crawler.urlopen")
+    @patch("fis_web.time.sleep")
+    @patch("fis_web.urlopen")
     def test_download_retries_rate_limit_using_retry_after(self, urlopen, sleep):
         error = HTTPError(
             "https://example.test",
@@ -172,6 +172,32 @@ class FisCrawlerTests(unittest.TestCase):
 
         self.assertEqual(_download("https://example.test"), "<html>ok</html>")
         sleep.assert_called_once_with(3)
+
+    def test_ambiguous_date_skips_only_that_competition(self):
+        html = """
+        <div class="table-row">
+          <div class="timezone-date" data-date="2026-10-16">16 Oct</div>
+          <div class="timezone-date" data-date="2026-10-17">17 Oct</div>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7934">0381 review</a>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7934">FESA</a>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7934">M</a>
+        </div>
+        <div class="table-row">
+          <div class="timezone-date" data-date="2026-10-18">18 Oct</div>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7935">0382 review</a>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7935">FESA</a>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7935">W</a>
+        </div>
+        """
+        warnings = []
+
+        records = _competition_rows(
+            html, "63279", "Predazzo", 2027, warn=warnings.append
+        )
+
+        self.assertEqual([record["codex"] for record in records], ["0382"])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("0381", warnings[0])
 
 
 if __name__ == "__main__":

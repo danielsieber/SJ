@@ -5,101 +5,34 @@ import sys
 import threading
 import time
 import tkinter as tk
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime
 from email.message import Message
-from email.utils import parsedate_to_datetime
-from html.parser import HTMLParser
 from pathlib import Path
 from tkinter import messagebox, ttk
-from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, urlparse
 
 from openpyxl import load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sj_paths import DATA_DIRECTORY  # noqa: E402
+from fis_web import (  # noqa: E402
+    REQUEST_DELAY_SECONDS,
+    SECTOR_CODE,
+    calendar_events as _calendar_events,
+    calendar_url as _calendar_url,
+    current_season,
+    detail_url as _detail_url,
+    open_url,
+    parse_document,
+    read_text,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RACEID_FILE = DATA_DIRECTORY / "raceid" / "raceid.xlsx"
 PDF_DIRECTORY = DATA_DIRECTORY / "pdf"
-BASE_URL = "https://www.fis-ski.com/DB"
-SECTOR_CODE = "JP"
-REQUEST_DELAY_SECONDS = 2
-MAX_RATE_LIMIT_RETRIES = 5
 CODEX_PATTERN = re.compile(r"^\s*(\d{4})(?:\b|$)")
-
-
-@dataclass
-class Element:
-    tag: str
-    attrs: dict[str, str]
-    parent: "Element | None" = None
-    children: list[object] = field(default_factory=list)
-
-    @property
-    def classes(self) -> set[str]:
-        return set(self.attrs.get("class", "").split())
-
-    @property
-    def text(self) -> str:
-        parts = []
-        for child in self.children:
-            if isinstance(child, Element):
-                parts.append(child.text)
-            elif child.strip():
-                parts.append(child.strip())
-        return " ".join(" ".join(parts).split())
-
-    def find_all(self, predicate) -> list["Element"]:
-        found = []
-        for child in self.children:
-            if isinstance(child, Element):
-                if predicate(child):
-                    found.append(child)
-                found.extend(child.find_all(predicate))
-        return found
-
-
-class _DocumentParser(HTMLParser):
-    _VOID_TAGS = {
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr",
-    }
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.root = Element("document", {})
-        self.stack = [self.root]
-
-    def handle_starttag(self, tag, attrs):
-        element = Element(tag, dict(attrs), self.stack[-1])
-        self.stack[-1].children.append(element)
-        if tag not in self._VOID_TAGS:
-            self.stack.append(element)
-
-    def handle_startendtag(self, tag, attrs):
-        self.handle_starttag(tag, attrs)
-        if tag not in self._VOID_TAGS:
-            self.handle_endtag(tag)
-
-    def handle_endtag(self, tag):
-        for index in range(len(self.stack) - 1, 0, -1):
-            if self.stack[index].tag == tag:
-                del self.stack[index:]
-                break
-
-    def handle_data(self, data):
-        self.stack[-1].children.append(data)
-
-
-def parse_document(html: str) -> Element:
-    parser = _DocumentParser()
-    parser.feed(html)
-    parser.close()
-    return parser.root
 
 
 def normalize_codex(value: str) -> str:
@@ -180,16 +113,22 @@ def read_workbook_candidates(workbook_path: Path, codex: str) -> list[Candidate]
                 )
 
             for row in rows:
-                row_codex = _cell_text(row[columns["codex"]]).zfill(4)
-                if row_codex != codex:
+                raw_codex = _cell_text(row[columns["codex"]])
+                if not raw_codex or raw_codex.zfill(4) != codex:
                     continue
-                season = int(row[columns["season"]])
+                row_codex = raw_codex.zfill(4)
+                season_text = _cell_text(row[columns["season"]])
                 eventid = _cell_text(row[columns["eventid"]])
+                if not season_text.isdigit() or not eventid:
+                    continue
+                season = int(season_text)
                 gender = _cell_text(row[columns["gender"]]).upper()
                 key = (season, eventid, row_codex, gender)
                 event_date = row[columns["date"]] if "date" in columns else ""
                 if isinstance(event_date, datetime):
                     event_date = event_date.date()
+                if event_date is None:
+                    event_date = ""
                 candidates[key] = Candidate(
                     season=season,
                     eventid=eventid,
@@ -205,96 +144,25 @@ def read_workbook_candidates(workbook_path: Path, codex: str) -> list[Candidate]
                 )
         return sorted(
             candidates.values(),
-            key=lambda candidate: (candidate.season, candidate.event_date, candidate.eventid),
+            key=lambda candidate: (
+                candidate.season,
+                _date_sort_text(candidate.event_date),
+                candidate.eventid,
+            ),
         )
     finally:
         workbook.close()
 
 
+def _date_sort_text(value) -> str:
+    """Sort dates and ISO date strings together; missing dates sort first."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return str(value or "")
+
+
 def _request(url: str):
-    request = Request(
-        url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
-            )
-        },
-    )
-    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
-        try:
-            return urlopen(request, timeout=45)
-        except HTTPError as error:
-            if error.code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
-                raise RuntimeError(f"FIS-Anfrage fehlgeschlagen ({url}): {error}") from error
-            retry_after = error.headers.get("Retry-After") if error.headers else None
-            delay = _retry_delay(retry_after, attempt)
-            time.sleep(delay)
-        except (URLError, TimeoutError) as error:
-            raise RuntimeError(f"FIS-Anfrage fehlgeschlagen ({url}): {error}") from error
-    raise RuntimeError(f"FIS-Anfrage konnte nicht abgeschlossen werden: {url}")
-
-
-def _retry_delay(retry_after: str | None, attempt: int) -> int:
-    if retry_after:
-        try:
-            return max(1, int(retry_after))
-        except ValueError:
-            try:
-                retry_at = parsedate_to_datetime(retry_after)
-                if retry_at.tzinfo is None:
-                    retry_at = retry_at.replace(tzinfo=timezone.utc)
-                return max(
-                    1,
-                    int((retry_at - datetime.now(timezone.utc)).total_seconds()),
-                )
-            except (TypeError, ValueError, OverflowError):
-                pass
-    return min(300, 30 * 2**attempt)
-
-
-def _calendar_url(season: int) -> str:
-    params = {
-        "eventselection": "",
-        "seasoncode": season,
-        "sectorcode": SECTOR_CODE,
-        "disciplinecode": "",
-        "gendercode": "",
-        "racecodex": "",
-        "seasonmonth": f"X-{season}",
-        "seasonselection": "",
-    }
-    return f"{BASE_URL}/ski-jumping/calendar-results.html?{urlencode(params)}"
-
-
-def _detail_url(eventid: str, season: int) -> str:
-    params = {"sectorcode": SECTOR_CODE, "eventid": eventid, "seasoncode": season}
-    return f"{BASE_URL}/general/event-details.html?{urlencode(params)}"
-
-
-def _calendar_events(html: str) -> list[tuple[str, str]]:
-    document = parse_document(html)
-    calendar = next(
-        (
-            node
-            for node in document.find_all(lambda item: item.attrs.get("id") == "calendardata")
-        ),
-        None,
-    )
-    if calendar is None:
-        raise ValueError("FIS-Kalender enthält keinen Veranstaltungsbereich.")
-    events = []
-    for row in calendar.find_all(
-        lambda item: "table-row" in item.classes and item.attrs.get("id", "").isdigit()
-    ):
-        place_nodes = row.find_all(
-            lambda item: "clip" in item.classes
-            and "bold" in item.classes
-            and "font_md_large" in item.classes
-        )
-        place = place_nodes[0].text if place_nodes else ""
-        events.append((row.attrs["id"], place))
-    return events
+    return open_url(url, timeout=45)
 
 
 def competition_rows(html: str) -> list[Competition]:
@@ -377,10 +245,7 @@ def find_fis_candidates(
     for season in sorted(set(seasons), reverse=True):
         progress(f"Codex {codex} fehlt in der Excel-Datei; durchsuche FIS-Saison {season}.")
         with _request(_calendar_url(season)) as response:
-            calendar_html = response.read().decode(
-                response.headers.get_content_charset() or "utf-8",
-                errors="replace",
-            )
+            calendar_html = read_text(response)
         events = _calendar_events(calendar_html)
         for index, (eventid, place) in enumerate(events, start=1):
             progress(
@@ -388,10 +253,7 @@ def find_fis_candidates(
                 f"{place or eventid}"
             )
             with _request(_detail_url(eventid, season)) as response:
-                event_html = response.read().decode(
-                    response.headers.get_content_charset() or "utf-8",
-                    errors="replace",
-                )
+                event_html = read_text(response)
             matches = [
                 Candidate(
                     season=season,
@@ -430,11 +292,14 @@ def find_candidates(
             if headers is None or "season" not in headers:
                 continue
             season_column = headers.index("season")
-            seasons.update(int(row[season_column]) for row in rows if row[season_column])
+            for row in rows:
+                season_text = _cell_text(row[season_column])
+                if season_text.isdigit():
+                    seasons.add(int(season_text))
     finally:
         workbook.close()
     if not seasons:
-        seasons = {2027}
+        seasons = {current_season()}
     return find_fis_candidates(codex, sorted(seasons), progress)
 
 
@@ -575,10 +440,7 @@ def download_candidate(
         progress(f"Vorherige PDFs archiviert in {archived_directory}")
 
     with _request(_detail_url(candidate.eventid, candidate.season)) as response:
-        html = response.read().decode(
-            response.headers.get_content_charset() or "utf-8",
-            errors="replace",
-        )
+        html = read_text(response)
 
     competitions = competition_rows(html)
     target_competitions = [
@@ -604,6 +466,12 @@ def download_candidate(
         )
 
     output_directory.mkdir(parents=True, exist_ok=True)
+    # Write the folder name before the first PDF: if a download fails midway,
+    # the next run can still archive the partial files under the right name.
+    folder_name_file = output_directory / "myFolderName.txt"
+    folder_name_file.write_text(folder_name, encoding="utf-8")
+    progress(f"Ordnername gespeichert: {folder_name_file}")
+
     downloaded = []
     total = len(attachments)
     attachment_items = list(attachments.values())
@@ -612,10 +480,9 @@ def download_candidate(
         with _request(attachment.url) as response:
             content = response.read()
             filename = _pdf_filename(response.headers, attachment.url)
-            content_type = response.headers.get("Content-Type", "").lower()
-        if not content.startswith(b"%PDF") or (
-            content_type and "application/pdf" not in content_type
-        ):
+        # FIS sometimes serves PDFs as application/octet-stream, so the file
+        # signature decides rather than the Content-Type header.
+        if not content.startswith(b"%PDF"):
             raise ValueError(
                 f"Der FIS-Anhang ist kein gültiges PDF: {attachment.label or attachment.url}"
             )
@@ -627,9 +494,6 @@ def download_candidate(
         progress(f"Gespeichert: {destination.name}")
         if index < total:
             time.sleep(REQUEST_DELAY_SECONDS)
-    folder_name_file = output_directory / "myFolderName.txt"
-    folder_name_file.write_text(folder_name, encoding="utf-8")
-    progress(f"Ordnername gespeichert: {folder_name_file}")
     return downloaded
 
 

@@ -57,8 +57,8 @@ def find_result_pdfs(pdf_directory: Path) -> list[Path]:
     )
 
 
-def reset_workbook(output_file: Path) -> None:
-    """Keep only the Daten sheet and its first column in the existing workbook."""
+def _cleared_workbook(output_file: Path) -> Workbook:
+    """Load the workbook (or create it) with only Daten and its first column."""
     output_file.parent.mkdir(parents=True, exist_ok=True)
     if output_file.exists():
         workbook = load_workbook(output_file)
@@ -75,7 +75,12 @@ def reset_workbook(output_file: Path) -> None:
             del workbook[sheet_name]
     if worksheet.max_column > 1:
         worksheet.delete_cols(2, worksheet.max_column - 1)
+    return workbook
 
+
+def reset_workbook(output_file: Path) -> None:
+    """Keep only the Daten sheet and its first column in the existing workbook."""
+    workbook = _cleared_workbook(output_file)
     try:
         workbook.save(output_file)
     finally:
@@ -99,21 +104,29 @@ def _sort_key(values: dict[str, object]) -> tuple[bool, int, bool, int]:
 
 
 def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
-    """Extract each PDF once and save the selected fields in separate columns."""
-    reset_workbook(output_file)
-    workbook = load_workbook(output_file)
+    """Extract each PDF once and save the selected fields in separate columns.
+
+    The workbook is saved exactly once, so a sync client (Nextcloud) sees a
+    single change. When there are no PDFs or a PDF cannot be read, the
+    cleared workbook is saved so no outdated results remain.
+    """
+    workbook = _cleared_workbook(output_file)
     worksheet = workbook["Daten"]
-    if not pdf_paths:
-        workbook.close()
-        raise FileNotFoundError("No matching RLT, RLQ, RTRIA, or RL PDFs found.")
-
     try:
-        worksheet["A1"] = "pdf"
+        if not pdf_paths:
+            workbook.save(output_file)
+            raise FileNotFoundError("No matching RLT, RLQ, RTRIA, or RL PDFs found.")
 
-        extracted = [
-            (pdf_path, extract_data(pdf_path))
-            for pdf_path in pdf_paths
-        ]
+        try:
+            extracted = [
+                (pdf_path, extract_data(pdf_path))
+                for pdf_path in pdf_paths
+            ]
+        except PdfParseError:
+            workbook.save(output_file)
+            raise
+
+        worksheet["A1"] = "pdf"
         extracted.sort(key=lambda item: _sort_key(item[1]))
 
         for column, (pdf_path, values) in enumerate(extracted, start=2):
@@ -175,7 +188,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        reset_workbook(args.output)
         pdf_paths = find_result_pdfs(args.pdf_dir)
         create_workbook(pdf_paths, args.output)
     except PermissionError as error:

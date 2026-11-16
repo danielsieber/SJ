@@ -2,28 +2,29 @@ import argparse
 import re
 import sys
 import time
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from email.utils import parsedate_to_datetime
-from html.parser import HTMLParser
-from io import BytesIO
+from datetime import date
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, urlparse
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sj_paths import DATA_DIRECTORY  # noqa: E402
+from fis_web import (  # noqa: E402
+    REQUEST_DELAY_SECONDS,
+    SECTOR_CODE,
+    calendar_events as _calendar_events,
+    calendar_url as _calendar_url,
+    current_season,
+    detail_url as _detail_url,
+    open_url,
+    parse_document as _parse_document,
+    read_text,
+)
 
 
-SECTOR_CODE = "JP"
-DEFAULT_SEASON = 2027
-REQUEST_DELAY_SECONDS = 2
-MAX_RATE_LIMIT_RETRIES = 5
-BASE_URL = "https://www.fis-ski.com/DB"
+DEFAULT_SEASON = current_season()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_PATH = DATA_DIRECTORY / "raceid" / "raceid.xlsx"
 HEADERS = (
@@ -38,178 +39,28 @@ HEADERS = (
 )
 
 
-@dataclass
-class Element:
-    tag: str
-    attrs: dict[str, str]
-    parent: "Element | None" = None
-    children: list[object] = field(default_factory=list)
-
-    @property
-    def classes(self) -> set[str]:
-        return set(self.attrs.get("class", "").split())
-
-    @property
-    def text(self) -> str:
-        return " ".join(
-            " ".join(child.split()) if isinstance(child, str) else child.text
-            for child in self.children
-            if isinstance(child, Element) or child.strip()
-        ).strip()
-
-    def find_all(self, predicate) -> list["Element"]:
-        found = []
-        for child in self.children:
-            if isinstance(child, Element):
-                if predicate(child):
-                    found.append(child)
-                found.extend(child.find_all(predicate))
-        return found
-
-
-class _DocumentParser(HTMLParser):
-    _VOID_TAGS = {
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr",
-    }
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.root = Element("document", {})
-        self.stack = [self.root]
-
-    def handle_starttag(self, tag, attrs):
-        element = Element(tag, dict(attrs), self.stack[-1])
-        self.stack[-1].children.append(element)
-        if tag not in self._VOID_TAGS:
-            self.stack.append(element)
-
-    def handle_startendtag(self, tag, attrs):
-        self.handle_starttag(tag, attrs)
-        if tag not in self._VOID_TAGS:
-            self.handle_endtag(tag)
-
-    def handle_endtag(self, tag):
-        for index in range(len(self.stack) - 1, 0, -1):
-            if self.stack[index].tag == tag:
-                del self.stack[index:]
-                break
-
-    def handle_data(self, data):
-        self.stack[-1].children.append(data)
-
-
-def _parse_document(html: str) -> Element:
-    parser = _DocumentParser()
-    parser.feed(html)
-    parser.close()
-    return parser.root
+def _warn(message: str) -> None:
+    print(f"Warnung: {message}", file=sys.stderr)
 
 
 def _download(url: str) -> str:
-    request = Request(
-        url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
-            )
-        },
-    )
-    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
-        try:
-            with urlopen(request, timeout=30) as response:
-                charset = response.headers.get_content_charset() or "utf-8"
-                return response.read().decode(charset, errors="replace")
-        except HTTPError as error:
-            if error.code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
-                raise RuntimeError(
-                    f"FIS-Seite konnte nicht geladen werden ({url}): {error}"
-                ) from error
-
-            retry_after = error.headers.get("Retry-After") if error.headers else None
-            delay = _retry_delay(retry_after, attempt)
-            print(
-                f"FIS-Drosselung (HTTP 429); neuer Versuch in {delay} Sekunden.",
-                file=sys.stderr,
-            )
-            time.sleep(delay)
-        except (URLError, TimeoutError) as error:
-            raise RuntimeError(
-                f"FIS-Seite konnte nicht geladen werden ({url}): {error}"
-            ) from error
-
-    raise RuntimeError(f"FIS-Seite konnte nach Wiederholungen nicht geladen werden: {url}")
-
-
-def _retry_delay(retry_after: str | None, attempt: int) -> int:
-    if retry_after:
-        try:
-            return max(1, int(retry_after))
-        except ValueError:
-            try:
-                retry_at = parsedate_to_datetime(retry_after)
-                if retry_at.tzinfo is None:
-                    retry_at = retry_at.replace(tzinfo=timezone.utc)
-                return max(
-                    1,
-                    int((retry_at - datetime.now(timezone.utc)).total_seconds()),
-                )
-            except (TypeError, ValueError, OverflowError):
-                pass
-    return min(300, 30 * 2**attempt)
-
-
-def _calendar_url(season: int) -> str:
-    params = {
-        "eventselection": "",
-        "seasoncode": season,
-        "sectorcode": SECTOR_CODE,
-        "disciplinecode": "",
-        "gendercode": "",
-        "racecodex": "",
-        "seasonmonth": f"X-{season}",
-        "seasonselection": "",
-    }
-    return f"{BASE_URL}/ski-jumping/calendar-results.html?{urlencode(params)}"
-
-
-def _detail_url(eventid: str, season: int) -> str:
-    params = {"sectorcode": SECTOR_CODE, "eventid": eventid, "seasoncode": season}
-    return f"{BASE_URL}/general/event-details.html?{urlencode(params)}"
-
-
-def _calendar_events(html: str) -> list[tuple[str, str]]:
-    document = _parse_document(html)
-    calendar = next(
-        (node for node in document.find_all(lambda item: item.attrs.get("id") == "calendardata")),
-        None,
-    )
-    if calendar is None:
-        raise ValueError("FIS-Kalender enthält keinen Veranstaltungsbereich (calendardata).")
-
-    events = []
-    for row in calendar.find_all(
-        lambda item: "table-row" in item.classes and item.attrs.get("id", "").isdigit()
-    ):
-        eventid = row.attrs["id"]
-        place_nodes = row.find_all(
-            lambda item: "clip" in item.classes
-            and "bold" in item.classes
-            and "font_md_large" in item.classes
+    def report_retry(delay: int) -> None:
+        print(
+            f"FIS-Drosselung (HTTP 429); neuer Versuch in {delay} Sekunden.",
+            file=sys.stderr,
         )
-        if not place_nodes:
-            place_nodes = row.find_all(
-                lambda item: "clip" in item.classes
-                and "bold" in item.classes
-                and "clip-xs" not in item.classes
-            )
-        place = place_nodes[0].text if place_nodes else ""
-        events.append((eventid, place))
-    return events
+
+    with open_url(url, timeout=30, on_retry=report_retry) as response:
+        return read_text(response)
 
 
-def _competition_rows(html: str, eventid: str, place: str, season: int) -> list[dict]:
+def _competition_rows(
+    html: str,
+    eventid: str,
+    place: str,
+    season: int,
+    warn=_warn,
+) -> list[dict]:
     document = _parse_document(html)
     competitions = []
     for row in document.find_all(lambda item: "table-row" in item.classes):
@@ -252,16 +103,20 @@ def _competition_rows(html: str, eventid: str, place: str, season: int) -> list[
             )
         }
         if len(date_values) != 1:
-            raise ValueError(
-                f"FIS-Datum für Wettkampf {eventid}/{codexes[0]} "
-                f"ist nicht eindeutig: {sorted(date_values)}"
+            warn(
+                f"Wettkampf {eventid}/{codexes[0]} übersprungen: FIS-Datum "
+                f"ist nicht eindeutig ({sorted(date_values)})."
             )
+            continue
+        date_value = date_values.pop()
         try:
-            competition_date = date.fromisoformat(date_values.pop())
-        except ValueError as error:
-            raise ValueError(
-                f"Ungültiges FIS-Datum für Wettkampf {eventid}/{codexes[0]}"
-            ) from error
+            competition_date = date.fromisoformat(date_value)
+        except ValueError:
+            warn(
+                f"Wettkampf {eventid}/{codexes[0]} übersprungen: "
+                f"ungültiges FIS-Datum {date_value!r}."
+            )
+            continue
 
         for gender in dict.fromkeys(genders):
             competitions.append(
@@ -341,7 +196,7 @@ def main() -> None:
         "--season",
         type=int,
         default=DEFAULT_SEASON,
-        help=f"FIS-Saison (Standard: {DEFAULT_SEASON})",
+        help=f"FIS-Saison (Standard: aktuelle Saison, {DEFAULT_SEASON})",
     )
     parser.add_argument(
         "--output",

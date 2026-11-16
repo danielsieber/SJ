@@ -30,8 +30,15 @@ The `.bat` files use the Python launcher `py` if available, otherwise `python`.
 py -m pip install -r pdf_to_xlsx\requirements.txt -r raceid_crawler\requirements.txt
 ```
 
-Tests for the shared path lookup:
+## Shared code
+
+- `sj_paths.py` – data folder lookup (see above)
+- `fis_web.py` – FIS page requests (with HTTP 429 retries), HTML parsing,
+  calendar parsing and the current season code (a season starting in July
+  2026 is `2027`); used by `raceid_crawler` and `pdf_download`
+
+Tests for the shared modules:
 
 ```powershell
-py -m unittest test_sj_paths
+py -m unittest test_sj_paths test_fis_web
 ```

@@ -169,9 +169,18 @@ def _information_values(text: str) -> dict[str, Any]:
         rf"{NUMBER}\s+{NUMBER}\s+{NUMBER}\b",
         re.I,
     )
+    has_first_round = any(
+        round_numbers[match.group(1).casefold()] == 1
+        and match.group(1).casefold() != "trial"
+        for match in round_matches
+    )
     for index, round_match in enumerate(round_matches):
         round_text = round_match.group(1).casefold()
         round_number = round_numbers[round_text]
+        # The trial round shares the "1" columns; it is only used when the
+        # PDF has no real first round, so it never overwrites competition data.
+        if round_text == "trial" and has_first_round:
+            continue
         end = round_matches[index + 1].start() if index + 1 < len(round_matches) else len(section)
         row_match = row_pattern.search(section, round_match.end(), end)
         if row_match is None:

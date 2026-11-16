@@ -261,6 +261,83 @@ class PdfDownloadTests(unittest.TestCase):
             ],
         )
 
+    def test_workbook_lookup_skips_blank_rows_and_sorts_missing_dates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "raceid.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "all"
+            sheet.append(["season", "date", "eventid", "codex", "place", "gender"])
+            sheet.append([2027, date(2026, 10, 25), "62788", "0279", "Klingenthal", "A"])
+            sheet.append([None, None, None, None, None, None])
+            sheet.append([2027, None, "62790", "0279", "Lahti", "M"])
+            workbook.save(path)
+            workbook.close()
+
+            candidates = downloader.read_workbook_candidates(path, "0279")
+
+        self.assertEqual([c.eventid for c in candidates], ["62790", "62788"])
+        self.assertEqual(candidates[0].event_date, "")
+
+    @patch("fis_pdf_download.time.sleep")
+    @patch("fis_pdf_download._request")
+    def test_failed_download_keeps_folder_name_for_next_archive(self, request, _sleep):
+        event_html = """
+        <div class="table-row">
+          <div class="timezone-date" data-date="2026-09-13">13 Sep</div>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7761">0281 review</a>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7761">FC</a>
+          <a href="/DB/general/results.html?sectorcode=JP&amp;raceid=7761">M</a>
+          <div class="drop-btn__item"><span>Results</span>
+            <a href="https://www.fis-ski.com/DB/v2/download/competition-attachment/1.pdf">D</a>
+          </div>
+          <div class="drop-btn__item"><span>Start List</span>
+            <a href="https://www.fis-ski.com/DB/v2/download/competition-attachment/2.pdf">D</a>
+          </div>
+        </div>
+        """
+
+        class FakeResponse:
+            def __init__(self, content, headers):
+                self.content = content
+                self.headers = headers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return self.content
+
+        html_headers = Message()
+        html_headers["Content-Type"] = "text/html; charset=utf-8"
+        pdf_headers = Message()
+        pdf_headers["Content-Type"] = "application/octet-stream"
+        pdf_headers["Content-Disposition"] = "inline; filename=2027JP0281RL.pdf"
+        request.side_effect = [
+            FakeResponse(event_html.encode("utf-8"), html_headers),
+            FakeResponse(b"%PDF-1.4 test", pdf_headers),
+            RuntimeError("network down"),
+        ]
+        candidate = downloader.Candidate(
+            season=2027, eventid="62754", codex="0281", gender="M", place="Einsiedeln"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "network down"):
+                downloader.download_candidate(candidate, output_dir)
+
+            self.assertTrue((output_dir / "2027JP0281RL.pdf").is_file())
+            self.assertEqual(
+                (output_dir / "myFolderName.txt").read_text(encoding="utf-8"),
+                "2026-09-13 Einsiedeln FCM",
+            )
+            archive_dir = downloader.archive_existing_files(output_dir)
+            self.assertEqual(archive_dir.name, "2026-09-13 Einsiedeln FCM")
+
     def test_filename_comes_from_fis_content_disposition(self):
         headers = Message()
         headers["Content-Disposition"] = "inline; filename=2027JP0295RL.pdf"
