@@ -17,5 +17,5 @@ in this repository. The app uses the first existing FIS `Web` folder
 2. `C:\CLOUD-DANIEL\Family\Sport\FIS\Web` (Desktop)
 3. `%USERPROFILE%\CLOUD-DANIEL\Family\Sport\FIS\Web` (Laptop)
 
-The command-line pipeline (`src/pipeline/cli`) reads `Liste_Codex.xlsx` and
-`Data_FIS` from the parent `FIS` folder.
+The command-line pipeline (`src/pipeline/cli`) reads `Data_FIS` from the same
+`Web` folder and `Liste_Codex.xlsx` from the parent `FIS` folder.

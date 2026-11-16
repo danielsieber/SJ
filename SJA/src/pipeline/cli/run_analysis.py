@@ -46,7 +46,8 @@ def main():
     print("Root Directory root_dir:  ", root_dir)
 
     # *****     start MODUL 20     *****     import raw data    ************************
-    result = main_analysis(weekend_id, str(root_dir))
+    web_root = find_web_root()[0] or root_dir
+    result = main_analysis(weekend_id, str(root_dir), str(web_root / "Data_FIS"))
     # *****     end MODUL 20       *****************************************************
 
     if result:
@@ -73,7 +74,7 @@ def main():
             fol_cleandata,
             output_filename,
             output_path,
-            pdf_output_path=(find_web_root()[0] or root_dir) / "Data_pdf",
+            pdf_output_path=web_root / "Data_pdf",
         )
         # *****     end MODUL 28     ******************************************************
 

@@ -7,7 +7,7 @@ from datetime import datetime
 from src.pipeline.phase_10_codex_list.parse_filename import parse_filename
 
 
-def main_analysis(weekend_id, root_dir):
+def main_analysis(weekend_id, root_dir, data_fis_dir=None):
     liste_codex_path = os.path.join(root_dir, "Liste_Codex.xlsx")
     
     if not os.path.exists(liste_codex_path):
@@ -65,7 +65,8 @@ def main_analysis(weekend_id, root_dir):
     output_filename = f"{date_file} {cup}{gender_letter} {place} HS{hs}.xlsx"
     output_path = os.path.join(root_dir, output_filename)
     
-    data_fis_dir = os.path.join(root_dir, "Data_FIS")
+    if data_fis_dir is None:
+        data_fis_dir = os.path.join(root_dir, "Data_FIS")
     
     fol_rawdata = []
     msg_rawdata = []
