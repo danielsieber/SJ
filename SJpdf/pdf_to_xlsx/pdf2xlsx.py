@@ -17,8 +17,20 @@ from sj_paths import DATA_DIRECTORY  # noqa: E402
 
 if __package__:
     from .pdf2xlsx_Daten import DATA_ROWS, PdfParseError, extract_data
+    from .pdf2xlsx_Resultate import (
+        ResultsParseError,
+        extract_results,
+        write_error_sheet,
+        write_results_sheet,
+    )
 else:
     from pdf2xlsx_Daten import DATA_ROWS, PdfParseError, extract_data
+    from pdf2xlsx_Resultate import (
+        ResultsParseError,
+        extract_results,
+        write_error_sheet,
+        write_results_sheet,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -103,8 +115,12 @@ def _sort_key(values: dict[str, object]) -> tuple[bool, int, bool, int]:
     return date_missing, date_order, time_missing, time_order
 
 
-def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
+def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> list[str]:
     """Extract each PDF once and save the selected fields in separate columns.
+
+    Every PDF also gets its own sheet (named like the PDF) with the result
+    table. When the result table of a PDF cannot be read without doubt, its
+    sheet only shows the reason and the reason is returned as a warning.
 
     The workbook is saved exactly once, so a sync client (Nextcloud) sees a
     single change. When there are no PDFs or a PDF cannot be read, the
@@ -157,6 +173,16 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
             for cell in worksheet[row]:
                 cell.fill = SECTION_FILL
 
+        warnings = []
+        for pdf_path, _values in extracted:
+            try:
+                rows = extract_results(pdf_path)
+            except ResultsParseError as error:
+                warnings.append(str(error))
+                write_error_sheet(workbook, pdf_path.stem, str(error))
+            else:
+                write_results_sheet(workbook, pdf_path.stem, rows)
+
         worksheet.freeze_panes = "B12"
         worksheet.column_dimensions["A"].width = 20
         for column in range(2, len(pdf_paths) + 2):
@@ -165,6 +191,7 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> None:
             ].width = 32
 
         workbook.save(output_file)
+        return warnings
     finally:
         workbook.close()
 
@@ -189,7 +216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         pdf_paths = find_result_pdfs(args.pdf_dir)
-        create_workbook(pdf_paths, args.output)
+        warnings = create_workbook(pdf_paths, args.output)
     except PermissionError as error:
         print(
             f"PDF to Excel failed: Cannot write '{args.output}'. "
@@ -202,6 +229,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"PDF to Excel failed: {error}", file=sys.stderr)
         return 1
 
+    for warning in warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
     print(f"Processed {len(pdf_paths)} PDF(s): {args.output}")
     return 0
 

@@ -207,6 +207,11 @@ Statistics
 
 
 class WorkbookTests(unittest.TestCase):
+    def setUp(self):
+        results_patcher = patch("pdf_to_xlsx.pdf2xlsx.extract_results", return_value=[])
+        self.extract_results = results_patcher.start()
+        self.addCleanup(results_patcher.stop)
+
     def test_only_supported_pdf_suffixes_are_selected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             pdf_directory = Path(temporary_directory)
@@ -271,7 +276,7 @@ class WorkbookTests(unittest.TestCase):
                 create_workbook([source_pdf], output_file)
 
             workbook = load_workbook(output_file, data_only=True)
-            self.assertEqual(workbook.sheetnames, ["Daten"])
+            self.assertEqual(workbook.sheetnames, ["Daten", "2027JP0276RLT"])
             worksheet = workbook["Daten"]
             self.assertEqual(worksheet["A1"].value, "pdf")
             self.assertEqual(worksheet["B1"].value, "2027JP0276RLT")

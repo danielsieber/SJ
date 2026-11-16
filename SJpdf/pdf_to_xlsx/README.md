@@ -18,6 +18,23 @@ left blank with a light red background. Each run removes all other sheets and
 clears every column after column A in `Daten` before writing the current
 results.
 
+In addition, every processed PDF gets its own sheet named like the PDF
+(for example `2027JP0281RLT`) with the result table (`pdf2xlsx_Resultate.py`).
+There is one row per athlete, and every sheet has the same fixed columns:
+rank, bib, name, NSA, U23, club, date of birth, status (Not Qualified, DSQ,
+DNS, NPS), then per round speed (rank), distance (fall `*`, rank), distance
+points, judge marks A-E, judge points, gate (gate before a change and the
+coach-request mark `©`), gate points, wind, wind points, round total and round
+rank, then total and remarks. Fields a PDF does not contain stay empty.
+Shared ranks (`=5.`) are stored as plain numbers.
+
+Values are read with their position on the page, so empty cells never shift
+values into another column. Each PDF is checked arithmetically (distance and
+judge points, round totals, total, and all ranks). If a check fails or the
+layout is unknown, the sheet only contains the reason (red tab), and the
+converter prints a warning; no unchecked values are written. A swap of two
+judges (A-E) cannot be detected by these checks.
+
 Install dependencies from this directory with:
 
 ```powershell
