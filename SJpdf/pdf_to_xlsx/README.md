@@ -1,10 +1,9 @@
 # FIS PDF to Excel
 
-`pdf2xlsx.bat` reads matching FIS result PDFs directly from
-`%USERPROFILE%\CLOUD-DANIEL\SJA\SJpdf\data\pdf` first and then
-`..\data\pdf` if no matching result PDFs are found in the synced folder.
-Subfolders, including archived event folders, are not searched. It creates
-`..\data\pdf_to_xlsx.xlsx`.
+`pdf2xlsx.bat` reads matching FIS result PDFs directly from `pdf` in the
+SJpdf data folder (see the main `SJpdf/README.md`). Subfolders, including
+archived event folders, are not searched. It creates `pdf_to_xlsx.xlsx` in the
+same data folder.
 Only files named like
 `2027JP0372RL`, `2027JP0372RLT`, `2027JP0372RLQ`, or `2027JP0372RTRIA`
 (with a `.pdf` extension) are processed. Other PDF types are ignored.

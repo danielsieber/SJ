@@ -15,6 +15,9 @@ from urllib.request import Request, urlopen
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sj_paths import DATA_DIRECTORY  # noqa: E402
+
 
 SECTOR_CODE = "JP"
 DEFAULT_SEASON = 2027
@@ -22,7 +25,7 @@ REQUEST_DELAY_SECONDS = 2
 MAX_RATE_LIMIT_RETRIES = 5
 BASE_URL = "https://www.fis-ski.com/DB"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "data" / "raceid" / "raceid.xlsx"
+DEFAULT_OUTPUT_PATH = DATA_DIRECTORY / "raceid" / "raceid.xlsx"
 HEADERS = (
     "season",
     "date",
@@ -344,7 +347,7 @@ def main() -> None:
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT_PATH,
-        help="Excel-Ausgabedatei (Standard: data/raceid/raceid.xlsx im Projektordner)",
+        help="Excel-Ausgabedatei (Standard: raceid/raceid.xlsx im SJpdf-Datenordner)",
     )
     args = parser.parse_args()
 

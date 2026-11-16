@@ -1,7 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-python "pdf2xlsx.py" %*
+set "PYTHON=python"
+where py >nul 2>nul && set "PYTHON=py"
+%PYTHON% "pdf2xlsx.py" %*
 set "exit_code=%ERRORLEVEL%"
 if not "%exit_code%"=="0" (
     echo.
@@ -9,5 +11,6 @@ if not "%exit_code%"=="0" (
     pause
     exit /b %exit_code%
 )
-start "" "%~dp0..\data\pdf_to_xlsx.xlsx"
+for /f "usebackq delims=" %%D in (`%PYTHON% "%~dp0..\sj_paths.py"`) do set "DATA_DIR=%%D"
+start "" "%DATA_DIR%\pdf_to_xlsx.xlsx"
 exit /b %exit_code%

@@ -18,10 +18,11 @@ SPEC.loader.exec_module(downloader)
 
 
 class PdfDownloadTests(unittest.TestCase):
-    def test_default_pdf_directory_is_in_project_data(self):
+    def test_default_paths_use_shared_data_directory(self):
+        self.assertEqual(downloader.PDF_DIRECTORY, downloader.DATA_DIRECTORY / "pdf")
         self.assertEqual(
-            downloader.PDF_DIRECTORY,
-            downloader.PROJECT_ROOT / "data" / "pdf",
+            downloader.RACEID_FILE,
+            downloader.DATA_DIRECTORY / "raceid" / "raceid.xlsx",
         )
 
     def test_codex_is_padded_to_four_digits(self):

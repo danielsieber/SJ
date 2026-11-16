@@ -1,7 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-python "FIS_pdf-download.py" %*
+set "PYTHON=python"
+where py >nul 2>nul && set "PYTHON=py"
+%PYTHON% "FIS_pdf-download.py" %*
 set "exit_code=%ERRORLEVEL%"
 if not "%exit_code%"=="0" (
     echo.

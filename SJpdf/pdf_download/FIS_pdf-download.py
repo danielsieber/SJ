@@ -1,6 +1,7 @@
 import queue
 import re
 import shutil
+import sys
 import threading
 import time
 import tkinter as tk
@@ -17,10 +18,13 @@ from urllib.request import Request, urlopen
 
 from openpyxl import load_workbook
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sj_paths import DATA_DIRECTORY  # noqa: E402
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RACEID_FILE = PROJECT_ROOT / "data" / "raceid" / "raceid.xlsx"
-PDF_DIRECTORY = PROJECT_ROOT / "data" / "pdf"
+RACEID_FILE = DATA_DIRECTORY / "raceid" / "raceid.xlsx"
+PDF_DIRECTORY = DATA_DIRECTORY / "pdf"
 BASE_URL = "https://www.fis-ski.com/DB"
 SECTOR_CODE = "JP"
 REQUEST_DELAY_SECONDS = 2

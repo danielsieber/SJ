@@ -231,41 +231,10 @@ class WorkbookTests(unittest.TestCase):
                 ["2027JP0373RL.pdf"],
             )
 
-    def test_default_input_prefers_synced_project_when_both_have_results(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            project_root = root / "checkout" / "SJpdf"
-            project_pdf_directory = project_root / "data" / "pdf"
-            project_pdf_directory.mkdir(parents=True)
-            (project_pdf_directory / "2027JP0373RL.pdf").touch()
-            synced_pdf_directory = (
-                root / "CLOUD-DANIEL" / "SJA" / "SJpdf" / "data" / "pdf"
-            )
-            archived_event = synced_pdf_directory / "archiv" / "event"
-            archived_event.mkdir(parents=True)
-            (archived_event / "2027JP0372RL.pdf").touch()
-            (synced_pdf_directory / "2027JP0374RL.pdf").touch()
+    def test_default_input_uses_shared_data_directory(self):
+        from sj_paths import DATA_DIRECTORY
 
-            self.assertEqual(
-                default_pdf_directory(project_root, root),
-                synced_pdf_directory,
-            )
-
-    def test_default_input_falls_back_to_checkout_when_synced_has_no_results(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            project_pdf_directory = root / "checkout" / "SJpdf" / "data" / "pdf"
-            project_pdf_directory.mkdir(parents=True)
-            (project_pdf_directory / "2027JP0372RL.pdf").touch()
-            synced_pdf_directory = (
-                root / "CLOUD-DANIEL" / "SJA" / "SJpdf" / "data" / "pdf"
-            )
-            synced_pdf_directory.mkdir(parents=True)
-
-            self.assertEqual(
-                default_pdf_directory(root / "checkout" / "SJpdf", root),
-                project_pdf_directory,
-            )
+        self.assertEqual(default_pdf_directory(), DATA_DIRECTORY / "pdf")
 
     def test_workbook_uses_pdf_columns_and_date_format(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

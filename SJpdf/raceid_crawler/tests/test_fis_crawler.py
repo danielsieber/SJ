@@ -21,10 +21,12 @@ from fis_raceid_crawler import (
 
 
 class FisCrawlerTests(unittest.TestCase):
-    def test_default_output_is_in_sjpdf_project_data(self):
+    def test_default_output_is_in_shared_data_directory(self):
+        from sj_paths import DATA_DIRECTORY
+
         self.assertEqual(
             DEFAULT_OUTPUT_PATH,
-            Path(__file__).resolve().parents[2] / "data" / "raceid" / "raceid.xlsx",
+            DATA_DIRECTORY / "raceid" / "raceid.xlsx",
         )
 
     def test_calendar_events_extract_event_id_and_place(self):

@@ -1,8 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "PYTHON=python"
+where py >nul 2>nul && set "PYTHON=py"
 
-python fis_raceid_crawler.py %*
+%PYTHON% fis_raceid_crawler.py %*
 set "exit_code=%ERRORLEVEL%"
 
 if not "%exit_code%"=="0" (

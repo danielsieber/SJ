@@ -5,11 +5,11 @@ three-, or four-digit Codex and press Enter or select **PDFs herunterladen**.
 Shorter Codices are padded to four digits, preserving leading zeros. When the
 Codex occurs in multiple events, select the intended event.
 
-The downloader reads `..\data\raceid\raceid.xlsx`, then downloads every PDF
+The downloader reads `raceid\raceid.xlsx` in the SJpdf data folder (see `SJpdf/README.md`), then downloads every PDF
 attached to the same event and gender as the selected Codex. This includes
 official results, start lists, training documents, and other FIS attachments.
 FIS's `Content-Disposition` filename is used for each PDF. Downloads are saved
-directly in `..\data\pdf`, alongside a `myFolderName.txt` with the suggested
+directly in `pdf` inside the data folder, alongside a `myFolderName.txt` with the suggested
 destination folder name:
 `yyyy-mm-dd place categorygender` (for example `2026-09-13 Einsiedeln FCM`).
 The date is the latest competition date for that event and gender; category

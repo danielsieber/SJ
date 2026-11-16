@@ -12,6 +12,9 @@ from typing import Sequence
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sj_paths import DATA_DIRECTORY  # noqa: E402
+
 if __package__:
     from .pdf2xlsx_Daten import DATA_ROWS, PdfParseError, extract_data
 else:
@@ -19,8 +22,8 @@ else:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PDF_DIRECTORY = PROJECT_ROOT / "data" / "pdf"
-OUTPUT_FILE = PROJECT_ROOT / "data" / "pdf_to_xlsx.xlsx"
+PDF_DIRECTORY = DATA_DIRECTORY / "pdf"
+OUTPUT_FILE = DATA_DIRECTORY / "pdf_to_xlsx.xlsx"
 PDF_NAME_PATTERN = re.compile(
     r"^\d{4}JP\d{4}(?:RLT|RLQ|RTRIA|RL)\.pdf$",
     re.IGNORECASE,
@@ -34,19 +37,9 @@ RANGLISTE_FONT_COLOR = "FF0000FF"
 GRAY_ROWS = (19, 29, 39, 49)
 
 
-def default_pdf_directory(
-    project_root: Path = PROJECT_ROOT,
-    home_directory: Path = Path.home(),
-) -> Path:
-    """Prefer the synced project copy, then use PDFs in this checkout."""
-    project_pdf_directory = project_root / "data" / "pdf"
-    synced_pdf_directory = (
-        home_directory / "CLOUD-DANIEL" / "SJA" / "SJpdf" / "data" / "pdf"
-    )
-    for directory in (synced_pdf_directory, project_pdf_directory):
-        if directory.is_dir() and find_result_pdfs(directory):
-            return directory
-    return synced_pdf_directory
+def default_pdf_directory() -> Path:
+    """Return data/pdf in the shared SJpdf data folder (see sj_paths.py)."""
+    return PDF_DIRECTORY
 
 
 def find_result_pdfs(pdf_directory: Path) -> list[Path]:
@@ -171,8 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--pdf-dir",
         type=Path,
         default=default_pdf_directory(),
-        help="Folder containing downloaded PDFs (default: synced project data/pdf, "
-        "or checkout data/pdf if needed)",
+        help=f"Folder containing downloaded PDFs (default: {PDF_DIRECTORY})",
     )
     parser.add_argument(
         "--output",
