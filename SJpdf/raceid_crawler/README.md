@@ -16,9 +16,9 @@ Die FIS verwendet zwei unterschiedliche IDs:
 Jeder Lauf ersetzt den Inhalt von `Event_ID` durch die Wettkämpfe der
 gecrawlten Saison. Die Spalten sind `season`, `date`, `eventid`, `raceid`,
 `codex`, `place`, `hill`, `cat1`, `cat2`, `gender` (Gender `M`, `W` oder `A` für
-Mixed, zum Beispiel Teamwettkämpfe) und `EventNr`. Das FIS-Datum ist ein Excel-Datum
-(`yyyy-mm-dd`), `eventid`, `raceid` und `codex` sind Text (führende Nullen
-bleiben). Die Zeilen sind nach `EventNr`, innerhalb nach Datum und dann nach Codex sortiert,
+Mixed, zum Beispiel Teamwettkämpfe), `EventNr` und `list_event`. Das FIS-Datum ist ein Excel-Datum
+(`yyyy-mm-dd`), `eventid`, `raceid`, `codex` und `list_event` sind Text
+(führende Nullen bleiben). Die Zeilen sind nach `EventNr`, innerhalb nach Datum und dann nach Codex sortiert,
 mit Filter über den ganzen Bereich.
 
 `hill` ist der Schanzentyp aus der FIS-Beschreibung des Wettkampfs, z. B.
@@ -27,7 +27,7 @@ mit Filter über den ganzen Bereich.
 Kalenders; sie steht erst in den Ergebnis-PDFs.
 
 `cat1` ist die FIS-Kategorie (z. B. `WC`, `GP`, `COC`, `QUA`). `cat2` ist gleich
-wie `cat1`, nur eine Qualifikation (`QUA`) erhält die Kategorie der
+wie `cat1`, nur `FIS` (FIS Cup) wird zu `FC`, und eine Qualifikation (`QUA`) erhält die Kategorie der
 Meisterschaft, zu der sie gehört (`OWG`, `WSC`, `SFWC` oder `WJC` am selben Ort,
 mit gleichem Gender und `hill`, innerhalb von 5 Kalendertagen), sonst `GP` (Mai
 bis Oktober) bzw. `WC` (übrige Monate).
@@ -38,10 +38,18 @@ gleichem Ort, gleichem `cat2`, gleichem Gender und gleichem `hill` innerhalb von
 5 Kalendertagen ab dem ersten Wettkampf erhalten dieselbe Nummer. Die
 Qualifikation gehört so zur Serie ihres Weltcups bzw. Grand Prix.
 
+`list_event` ist der Name des Wettkampfs für eine spätere Dropdown-Liste:
+`EventNr` dreistellig, `date`, `cat2` und `gender`, `place`, `hill`, `codex`,
+z. B. `001 2026-07-04 CHIW Rastbuchl SH 0284`.
+
 Excel selbst schreibt das Sheet (über `pywin32`, in einer eigenen,
 unsichtbaren Excel-Instanz, ohne die Makros auszuführen). Dadurch bleiben
 Makros, Schaltflächen, Tabellen und Formeln der anderen Sheets erhalten; die
-Datei wird einmal gespeichert. Ist `SJ-Listen.xlsm` in Excel geöffnet, bricht
+Datei wird einmal gespeichert. In `Event_ID` werden nur die Werte ersetzt:
+Formate, bedingte Formatierungen und Spaltenbreiten bleiben. Bedingte
+Formatierungen am besten auf ganze Spalten legen (z. B. `J:J`), damit sie auch
+bei mehr Zeilen greifen. Nur eine neue Spalte erhält die blaue Kopfzeile und
+eine passende Breite. Ist `SJ-Listen.xlsm` in Excel geöffnet, bricht
 der Crawler mit einer Meldung ab: Datei schliessen und erneut starten. Findet
 der Crawler keine Wettkämpfe, bleibt `Event_ID` unverändert.
 

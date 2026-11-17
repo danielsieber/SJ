@@ -22,6 +22,7 @@ from fis_raceid_crawler import (
     _competition_rows,
     _download,
     event_numbers,
+    list_event,
     second_category,
     sheet_rows,
     write_event_sheet,
@@ -109,6 +110,7 @@ class FisCrawlerTests(unittest.TestCase):
                 "cat2",
                 "gender",
                 "EventNr",
+                "list_event",
             ),
         )
 
@@ -125,7 +127,7 @@ class FisCrawlerTests(unittest.TestCase):
         # Excel serial number of 2026-10-24
         self.assertEqual(rows[1][1], (date(2026, 10, 24) - date(1899, 12, 30)).days)
         self.assertEqual(rows[1][1], 46319)
-        self.assertEqual([row[-1] for row in rows[1:]], [1, 2, 3])
+        self.assertEqual([row[10] for row in rows[1:]], [1, 2, 3])
 
     def test_rows_are_sorted_by_event_number_date_and_codex(self):
         rows = sheet_rows(
@@ -137,7 +139,7 @@ class FisCrawlerTests(unittest.TestCase):
             ]
         )
         self.assertEqual(
-            [(row[-1], row[4]) for row in rows[1:]],
+            [(row[10], row[4]) for row in rows[1:]],
             # women end on 12 Dec, men on 13 Dec
             [(1, "0012"), (2, "0321"), (2, "0010"), (2, "0011")],
         )
@@ -148,8 +150,25 @@ class FisCrawlerTests(unittest.TestCase):
         self.assertEqual(second_category("QUA", date(2026, 11, 1)), "WC")
         self.assertEqual(second_category("QUA", date(2027, 4, 30)), "WC")
         self.assertEqual(second_category("COC", date(2026, 8, 1)), "COC")
+        self.assertEqual(second_category("FIS", date(2026, 8, 1)), "FC")
         rows = sheet_rows([record("0275", date(2026, 10, 24), "W", "QUA")])
         self.assertEqual(rows[1][7:9], ["QUA", "GP"])
+
+    def test_list_event_names_each_competition(self):
+        self.assertEqual(
+            list_event(1, date(2026, 7, 4), "CHI", "W", "Rastbuchl", "SH", "0284"),
+            "001 2026-07-04 CHIW Rastbuchl SH 0284",
+        )
+        rows = sheet_rows(
+            [
+                record("0359", date(2027, 3, 18), category="QUA", place="Planica", hill="FH"),
+                record("0360", date(2027, 3, 19), category="WC", place="Planica", hill="FH"),
+            ]
+        )
+        self.assertEqual(
+            [row[11] for row in rows[1:]],
+            ["001 2027-03-18 WCM Planica FH 0359", "001 2027-03-19 WCM Planica FH 0360"],
+        )
 
     def test_championship_qualification_joins_the_championship(self):
         rows = sheet_rows(
@@ -161,7 +180,7 @@ class FisCrawlerTests(unittest.TestCase):
             ]
         )
         self.assertEqual(
-            [(row[4], row[8], row[-1]) for row in rows[1:]],
+            [(row[4], row[8], row[10]) for row in rows[1:]],
             [("0064", "WSC", 1), ("0065", "WSC", 1), ("0071", "WSC", 2), ("0072", "WSC", 2)],
         )
 
@@ -251,6 +270,14 @@ class FisCrawlerTests(unittest.TestCase):
                 if sheet.title != SHEET_NAME
             }
             parts = set(zipfile.ZipFile(path).namelist())
+            conditional_formats = [
+                (str(item.sqref), [rule.formula for rule in item.rules])
+                for item in before[SHEET_NAME].conditional_formatting
+            ]
+            widths = {
+                key: dimension.width
+                for key, dimension in before[SHEET_NAME].column_dimensions.items()
+            }
             before.close()
 
             write_event_sheet(records, path)
@@ -266,8 +293,20 @@ class FisCrawlerTests(unittest.TestCase):
             self.assertEqual(len(rows), 3)
             self.assertEqual(rows[1][1].date(), date(2026, 10, 24))
             self.assertEqual(rows[1][2:7], ("62788", "7278", "0278", "Klingenthal", "LH"))
-            self.assertEqual(sheet.auto_filter.ref, "A1:K3")
-            self.assertEqual([row[-1] for row in rows[1:]], [1, 2])
+            self.assertEqual(sheet.auto_filter.ref, "A1:L3")
+            self.assertEqual(rows[1][11], "001 2026-10-24 GPM Klingenthal LH 0278")
+            # the user's conditional formats and column widths stay
+            self.assertEqual(
+                [
+                    (str(item.sqref), [rule.formula for rule in item.rules])
+                    for item in sheet.conditional_formatting
+                ],
+                conditional_formats,
+            )
+            for key, width in widths.items():
+                if key != "L":
+                    self.assertEqual(sheet.column_dimensions[key].width, width, key)
+            self.assertEqual([row[10] for row in rows[1:]], [1, 2])
             for title, values in other_sheets.items():
                 self.assertEqual(
                     [row for row in after[title].iter_rows(values_only=True)], values

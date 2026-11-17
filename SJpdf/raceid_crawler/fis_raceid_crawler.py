@@ -37,8 +37,10 @@ HEADERS = (
     "cat2",
     "gender",
     "EventNr",
+    "list_event",
 )
-TEXT_COLUMNS = ("eventid", "raceid", "codex")  # keep leading zeros (codex 0284)
+# keep leading zeros (codex 0284, list_event 001 ...)
+TEXT_COLUMNS = ("eventid", "raceid", "codex", "list_event")
 EXCEL_EPOCH = date(1899, 12, 30)
 HEADER_FONT_COLOR = 0xFFFFFF  # Excel colours are BGR: white
 HEADER_FILL_COLOR = 0x8A3517  # RGB 17358A (dark blue) as BGR
@@ -47,6 +49,8 @@ MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3  # do not run the workbook's macros
 # (May to October) Grand Prix, else World Cup.
 SUMMER_MONTHS = range(5, 11)
 CHAMPIONSHIP_CATEGORIES = ("OWG", "WSC", "SFWC", "WJC")
+# cat2 of other categories that differ from cat1 (FIS Cup is FC).
+CATEGORY_2 = {"FIS": "FC"}
 # Competitions of one event lie within 5 calendar days (e.g. Friday to Tuesday).
 EVENT_SPAN = timedelta(days=4)
 # FIS describes each competition as e.g. "Individual Large Hill Qualification".
@@ -221,10 +225,10 @@ def event_numbers(records: list[dict]) -> list[int]:
 
 
 def second_category(category: str, competition_date: date, championship: str | None = None) -> str:
-    """cat2: the category, but QUA becomes the championship (e.g. WSC) it
-    belongs to, else GP (May to October) or WC."""
+    """cat2: the category, but FIS becomes FC and QUA becomes the championship
+    (e.g. WSC) it belongs to, else GP (May to October) or WC."""
     if category != "QUA":
-        return category
+        return CATEGORY_2.get(category, category)
     if championship:
         return championship
     return "GP" if competition_date.month in SUMMER_MONTHS else "WC"
@@ -276,8 +280,42 @@ def sheet_rows(records: list[dict]) -> list[list]:
         values["cat1"] = record["category"]
         values["cat2"] = category_2
         values["EventNr"] = number
+        values["list_event"] = list_event(
+            number,
+            record["date"],
+            category_2,
+            record["gender"],
+            record["place"],
+            record.get("hill"),
+            record["codex"],
+        )
         rows.append([values[header] for header in HEADERS])
     return rows
+
+
+def list_event(
+    number: int,
+    competition_date: date,
+    category_2: str,
+    gender: str,
+    place: str,
+    hill,
+    codex: str,
+) -> str:
+    """Name of a competition for a drop-down list:
+    '001 2026-07-04 CHIW Rastbuchl SH 0284'."""
+    return " ".join(
+        part
+        for part in (
+            f"{number:03d}",
+            competition_date.isoformat(),
+            f"{category_2}{gender}",
+            place,
+            hill or "",
+            codex,
+        )
+        if part
+    )
 
 
 def _local_date_format(excel) -> str:
@@ -338,9 +376,11 @@ def write_event_sheet(records: list[dict], workbook_path: Path, excel_factory=No
         if SHEET_NAME not in [sheet.Name for sheet in workbook.Worksheets]:
             raise ValueError(f"Sheet {SHEET_NAME} fehlt in {workbook_path.name}.")
         sheet = workbook.Worksheets(SHEET_NAME)
+        old_headers = [sheet.Cells(1, index).Value for index in range(1, len(HEADERS) + 1)]
         if sheet.AutoFilterMode:
             sheet.AutoFilterMode = False
-        sheet.UsedRange.Clear()
+        # Only the values: formats, conditional formats and column widths stay.
+        sheet.UsedRange.ClearContents()
 
         data = sheet.Range(sheet.Cells(1, 1), sheet.Cells(len(rows), len(HEADERS)))
         for index, header in enumerate(HEADERS, start=1):
@@ -351,12 +391,17 @@ def write_event_sheet(records: list[dict], workbook_path: Path, excel_factory=No
                 column.NumberFormatLocal = _local_date_format(excel)
         data.Value = tuple(tuple(row) for row in rows)
 
-        header = sheet.Range(sheet.Cells(1, 1), sheet.Cells(1, len(HEADERS)))
-        header.Font.Bold = True
-        header.Font.Color = HEADER_FONT_COLOR
-        header.Interior.Color = HEADER_FILL_COLOR
+        # Format only columns that are new in this sheet; the user's formats of
+        # the existing columns are kept.
+        for index, header in enumerate(HEADERS, start=1):
+            if old_headers[index - 1] == header:
+                continue
+            cell = sheet.Cells(1, index)
+            cell.Font.Bold = True
+            cell.Font.Color = HEADER_FONT_COLOR
+            cell.Interior.Color = HEADER_FILL_COLOR
+            data.Columns(index).AutoFit()
         data.AutoFilter()
-        data.Columns.AutoFit()
         workbook.Save()
     finally:
         if workbook is not None:
