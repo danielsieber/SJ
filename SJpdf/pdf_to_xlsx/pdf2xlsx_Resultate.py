@@ -604,8 +604,15 @@ def _parse_page(page: pymupdf.Page, page_number: int, state: _State) -> None:
             s for s in spans
             if table.left - 2 <= s.x0 < table.right and table.header_y + 3 < s.y < table_end
         ]
+        # Swiss Timing starts this separator row left of the table edge.
         not_qualified_y = min(
-            (s.y for s in table_spans if NOT_QUALIFIED_PATTERN.match(s.text)), default=None
+            (
+                s.y for s in spans
+                if NOT_QUALIFIED_PATTERN.match(s.text)
+                and table.left - 16 <= s.x0 < table.right
+                and table.header_y + 3 < s.y < table_end
+            ),
+            default=None,
         )
         used: set[int] = set()
         for top, bottom in _row_cells(page, table, table_end):

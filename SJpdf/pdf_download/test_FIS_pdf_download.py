@@ -212,6 +212,14 @@ class PdfDownloadTests(unittest.TestCase):
             )
             self.assertEqual(downloaded[0].parent, output_dir)
             self.assertEqual(
+                (output_dir / "pdf_links.csv").read_text(encoding="utf-8").splitlines(),
+                [
+                    "pdf,url",
+                    "2027JP0281RL.pdf,https://www.fis-ski.com/DB/v2/download/"
+                    "competition-attachment/11111111-1111-1111-1111-111111111111.pdf",
+                ],
+            )
+            self.assertEqual(
                 (archived_dir / "previous.pdf").read_bytes(),
                 b"%PDF-previous",
             )

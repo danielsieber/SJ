@@ -7,11 +7,14 @@ Codex occurs in multiple events, select the intended event.
 
 The downloader reads `raceid\raceid.xlsx` in the SJpdf data folder (see `SJpdf/README.md`), then downloads every PDF
 attached to the same event and gender as the selected Codex. This includes
-official results, start lists, training documents, and other FIS attachments.
+official results, start lists (SLR1/SLRF are used by `pdf_to_xlsx` for the
+jump order), training documents, and other FIS attachments.
 FIS's `Content-Disposition` filename is used for each PDF. Downloads are saved
 directly in `pdf` inside the data folder, alongside a `myFolderName.txt` with the suggested
 destination folder name:
 `yyyy-mm-dd place categorygender` (for example `2026-09-13 Einsiedeln FCM`).
+The original FIS link of each PDF is saved in `pdf_links.csv` (columns
+`pdf`, `url`) in the same folder; `pdf_to_xlsx` uses it to link the PDFs.
 The date is the latest competition date for that event and gender; category
 and gender come from the race-ID workbook. Before each download, any files
 already directly in `..\data\pdf` are moved into

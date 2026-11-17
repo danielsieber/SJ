@@ -1,3 +1,4 @@
+import csv
 import queue
 import re
 import shutil
@@ -32,6 +33,8 @@ from fis_web import (  # noqa: E402
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RACEID_FILE = DATA_DIRECTORY / "raceid" / "raceid.xlsx"
 PDF_DIRECTORY = DATA_DIRECTORY / "pdf"
+# Original FIS link of every downloaded PDF (read by pdf_to_xlsx).
+LINKS_FILENAME = "pdf_links.csv"
 CODEX_PATTERN = re.compile(r"^\s*(\d{4})(?:\b|$)")
 
 
@@ -472,6 +475,10 @@ def download_candidate(
     folder_name_file.write_text(folder_name, encoding="utf-8")
     progress(f"Ordnername gespeichert: {folder_name_file}")
 
+    links_file = output_directory / LINKS_FILENAME
+    with links_file.open("w", encoding="utf-8", newline="") as handle:
+        csv.writer(handle).writerow(["pdf", "url"])
+
     downloaded = []
     total = len(attachments)
     attachment_items = list(attachments.values())
@@ -490,6 +497,8 @@ def download_candidate(
         destination = _unique_path(output_directory, filename)
         with destination.open("xb") as pdf_file:
             pdf_file.write(content)
+        with links_file.open("a", encoding="utf-8", newline="") as handle:
+            csv.writer(handle).writerow([destination.name, attachment.url])
         downloaded.append(destination)
         progress(f"Gespeichert: {destination.name}")
         if index < total:

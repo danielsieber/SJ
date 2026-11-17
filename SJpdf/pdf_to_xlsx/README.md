@@ -2,7 +2,7 @@
 
 `pdf2xlsx.bat` reads matching FIS result PDFs directly from `pdf` in the
 SJpdf data folder (see the main `SJpdf/README.md`). Subfolders, including
-archived event folders, are not searched. It creates `pdf_to_xlsx.xlsx` in the
+archived event folders, are not searched. It creates `latest event.xlsx` in the
 same data folder.
 Only files named like
 `2027JP0372RL`, `2027JP0372RLT`, `2027JP0372RLQ`, or `2027JP0372RTRIA`
@@ -34,6 +34,53 @@ judge points, round totals, total, and all ranks). If a check fails or the
 layout is unknown, the sheet only contains the reason (red tab), and the
 converter prints a warning; no unchecked values are written. A swap of two
 judges (A-E) cannot be detected by these checks.
+
+For a competition (`...RL.pdf`), the intermediate results after the first
+round (`...RL1.pdf`, same folder) are read as well; they get their own sheet
+and a column in `Daten`, both directly before the RL. The start lists of the
+first round (`...SLR1.pdf`) and of the final round (`...SLRF.pdf`) get a sheet
+with start order, bib and name (sheet order SLR1, RL1, SLRF, RL); they have
+no column in `Daten`.
+
+The sheet `Ranglisten` (`pdf2xlsx_Ranglisten.py`) combines all rounds in jump
+order. Its columns are the same on every run (it is loaded into a database
+later): A:H athlete and status, I:AB the values of the round (Speed ...
+Round Rank), AC `Total` (only in the second competition round), AD `JumpID`,
+AE `PDF` (source PDF of the row).
+
+- Rounds follow the `Daten` order (date, start time); a PDF with two rounds
+  gives two blocks. `JumpID` is the competition name, the round number and
+  the type: `T` training (RLT), `P` trial round (RTRIA), `Q` qualification
+  (RLQ), `W` competition (RL), e.g. `2026-09-13 FCM Einsiedeln HS117 01T`.
+  Without a competition name, `Ranglisten` is not created (warning).
+- Within a round the rows are in start order. Training, trial round and
+  qualification: bib order. Competition: order of the start lists SLR1 and
+  SLRF (this also covers the zip order 50., 1., 49., 2., ... of World Cup
+  competitions around New Year, and Grand Prix lists starting with the
+  highest bib). An athlete missing in a start list is inserted with a
+  warning: round 1 at his bib position, the second round at his position in
+  the reverse RL1 ranking. Without a start list, round 1 is in bib order and
+  the second round in the reverse order of RL1, with a warning.
+- The first competition round is taken from RL1 (an athlete disqualified in
+  the second round has no first-round values in RL anymore); the second
+  round from RL. Only athletes who started are listed in a second round.
+- Status: `DSQ`, `DNS`, `NPS` for the round concerned; `Not Qualified` when
+  the athlete may not start in the next round.
+- If RL1 is missing, the first round is taken from RL and a warning is shown.
+
+Besides `latest event.xlsx`, the same workbook is saved as
+`<last date> <type><gender> <place> HS<hill size>.xlsx`, for example
+`2026-09-13 FCM Einsiedeln HS117.xlsx` (types FC, WC, GP, COC, ICOC, AC;
+gender M, W, A for mixed).
+
+The sheet `Notes` (last sheet, active when the workbook is opened) shows the
+time of the run, the folder and file name of the workbook (Excel formulas,
+so they are correct for both files), the name of the competition copy, the
+PDF folder, all warnings and
+information of the run, and every PDF with its location and original FIS
+link. The FIS links come from `pdf_links.csv`, which the PDF downloader
+writes next to the PDFs; the PDF names in row 1 of `Daten` link to them.
+PDFs downloaded before this file existed have no link.
 
 Install dependencies from this directory with:
 

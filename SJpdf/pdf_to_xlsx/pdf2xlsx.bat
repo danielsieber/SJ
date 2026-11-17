@@ -23,5 +23,5 @@ if not "%SJPDF_SYNC_WAIT%"=="0" (
     echo Waiting %SJPDF_SYNC_WAIT% seconds for Nextcloud to upload the workbook ...
     timeout /t %SJPDF_SYNC_WAIT% /nobreak >nul
 )
-start "" "%DATA_DIR%\pdf_to_xlsx.xlsx"
+start "" "%DATA_DIR%\latest event.xlsx"
 exit /b %exit_code%
