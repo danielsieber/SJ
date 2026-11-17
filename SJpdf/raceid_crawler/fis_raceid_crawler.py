@@ -33,7 +33,8 @@ HEADERS = (
     "codex",
     "place",
     "hill",
-    "category",
+    "cat1",
+    "cat2",
     "gender",
     "EventNr",
 )
@@ -42,6 +43,10 @@ EXCEL_EPOCH = date(1899, 12, 30)
 HEADER_FONT_COLOR = 0xFFFFFF  # Excel colours are BGR: white
 HEADER_FILL_COLOR = 0x8A3517  # RGB 17358A (dark blue) as BGR
 MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3  # do not run the workbook's macros
+# cat2 of a qualification: the championship it belongs to, else summer
+# (May to October) Grand Prix, else World Cup.
+SUMMER_MONTHS = range(5, 11)
+CHAMPIONSHIP_CATEGORIES = ("OWG", "WSC", "SFWC", "WJC")
 # Competitions of one event lie within 5 calendar days (e.g. Friday to Tuesday).
 EVENT_SPAN = timedelta(days=4)
 # FIS describes each competition as e.g. "Individual Large Hill Qualification".
@@ -176,18 +181,18 @@ def _sorted(records: list[dict]) -> list[dict]:
 def event_numbers(records: list[dict]) -> list[int]:
     """Consecutive event number for each record of ``_sorted(records)``.
 
-    One event (e.g. World Cup men in Klingenthal on Saturday and Sunday) has
-    the same season, place, category, gender and hill type (NH/LH/FH) and all
-    its competitions lie within 5 calendar days of the first one.
+    One event (e.g. World Cup men in Klingenthal: qualification, Saturday and
+    Sunday) has the same season, place, cat2, gender and hill type (NH/LH/FH)
+    and all its competitions lie within 5 calendar days of the first one.
     """
     numbers = []
     last_number = 0
     open_events = {}  # key -> (number, date of the first competition)
-    for record in records:
+    for record, category_2 in zip(records, second_categories(records)):
         key = (
             record["season"],
             record["place"],
-            record["category"],
+            category_2,
             record["gender"],
             record.get("hill"),
         )
@@ -200,17 +205,61 @@ def event_numbers(records: list[dict]) -> list[int]:
     return numbers
 
 
-def sheet_rows(records: list[dict]) -> list[list]:
-    """Header and records sorted by season, date and codex, as Excel values.
+def second_category(category: str, competition_date: date, championship: str | None = None) -> str:
+    """cat2: the category, but QUA becomes the championship (e.g. WSC) it
+    belongs to, else GP (May to October) or WC."""
+    if category != "QUA":
+        return category
+    if championship:
+        return championship
+    return "GP" if competition_date.month in SUMMER_MONTHS else "WC"
 
-    Dates become Excel serial numbers (shown as yyyy-mm-dd), so no time zone
-    conversion can shift them.
+
+def _championship(qualification: dict, records: list[dict]) -> str | None:
+    """Championship category held on the same hill (place, gender, hill type)
+    within 5 calendar days of the qualification, if any."""
+    for record in records:
+        if (
+            record["category"] in CHAMPIONSHIP_CATEGORIES
+            and record["season"] == qualification["season"]
+            and record["place"] == qualification["place"]
+            and record["gender"] == qualification["gender"]
+            and record.get("hill") == qualification.get("hill")
+            and abs(record["date"] - qualification["date"]) <= EVENT_SPAN
+        ):
+            return record["category"]
+    return None
+
+
+def second_categories(records: list[dict]) -> list[str]:
+    """cat2 for each record."""
+    return [
+        second_category(
+            record["category"],
+            record["date"],
+            _championship(record, records) if record["category"] == "QUA" else None,
+        )
+        for record in records
+    ]
+
+
+def sheet_rows(records: list[dict]) -> list[list]:
+    """Header and records sorted by EventNr and codex, as Excel values.
+
+    EventNr counts the events in date order. Dates become Excel serial numbers
+    (shown as yyyy-mm-dd), so no time zone conversion can shift them.
     """
-    rows = [list(HEADERS)]
     records = _sorted(records)
-    for record, number in zip(records, event_numbers(records)):
+    numbered = sorted(
+        zip(event_numbers(records), records, second_categories(records)),
+        key=lambda item: (item[0], int(item[1]["codex"])),
+    )
+    rows = [list(HEADERS)]
+    for number, record, category_2 in numbered:
         values = dict(record)
         values["date"] = (record["date"] - EXCEL_EPOCH).days
+        values["cat1"] = record["category"]
+        values["cat2"] = category_2
         values["EventNr"] = number
         rows.append([values[header] for header in HEADERS])
     return rows

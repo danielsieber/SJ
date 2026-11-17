@@ -15,10 +15,10 @@ Die FIS verwendet zwei unterschiedliche IDs:
 
 Jeder Lauf ersetzt den Inhalt von `Event_ID` durch die Wettkämpfe der
 gecrawlten Saison. Die Spalten sind `season`, `date`, `eventid`, `raceid`,
-`codex`, `place`, `hill`, `category`, `gender` (Gender `M`, `W` oder `A` für
+`codex`, `place`, `hill`, `cat1`, `cat2`, `gender` (Gender `M`, `W` oder `A` für
 Mixed, zum Beispiel Teamwettkämpfe) und `EventNr`. Das FIS-Datum ist ein Excel-Datum
 (`yyyy-mm-dd`), `eventid`, `raceid` und `codex` sind Text (führende Nullen
-bleiben). Die Zeilen sind aufsteigend nach Saison, Datum und Codex sortiert,
+bleiben). Die Zeilen sind nach `EventNr` und innerhalb nach Codex sortiert,
 mit Filter über den ganzen Bereich.
 
 `hill` ist der Schanzentyp aus der FIS-Beschreibung des Wettkampfs, z. B.
@@ -26,9 +26,16 @@ mit Filter über den ganzen Bereich.
 `FH` (Flying Hill). Die Schanzengrösse (HS) steht nicht auf den FIS-Seiten des
 Kalenders; sie steht erst in den Ergebnis-PDFs.
 
-`EventNr` nummeriert die Wettkampfserien fortlaufend: Wettkämpfe mit gleichem
-Ort, gleicher Kategorie, gleichem Gender und gleichem `hill` innerhalb von 5
-Kalendertagen ab dem ersten Wettkampf erhalten dieselbe Nummer.
+`cat1` ist die FIS-Kategorie (z. B. `WC`, `GP`, `COC`, `QUA`). `cat2` ist gleich
+wie `cat1`, nur eine Qualifikation (`QUA`) erhält die Kategorie der
+Meisterschaft, zu der sie gehört (`OWG`, `WSC`, `SFWC` oder `WJC` am selben Ort,
+mit gleichem Gender und `hill`, innerhalb von 5 Kalendertagen), sonst `GP` (Mai
+bis Oktober) bzw. `WC` (übrige Monate).
+
+`EventNr` nummeriert die Wettkampfserien in Datumsreihenfolge: Wettkämpfe mit
+gleichem Ort, gleichem `cat2`, gleichem Gender und gleichem `hill` innerhalb von
+5 Kalendertagen ab dem ersten Wettkampf erhalten dieselbe Nummer. Die
+Qualifikation gehört so zur Serie ihres Weltcups bzw. Grand Prix.
 
 Excel selbst schreibt das Sheet (über `pywin32`, in einer eigenen,
 unsichtbaren Excel-Instanz, ohne die Makros auszuführen). Dadurch bleiben

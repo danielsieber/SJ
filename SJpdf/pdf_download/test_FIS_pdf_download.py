@@ -244,7 +244,7 @@ class PdfDownloadTests(unittest.TestCase):
                     "raceid",
                     "codex",
                     "place",
-                    "category",
+                    "cat1",
                     "gender",
                 ]
             )

@@ -22,6 +22,7 @@ from fis_raceid_crawler import (
     _competition_rows,
     _download,
     event_numbers,
+    second_category,
     sheet_rows,
     write_event_sheet,
 )
@@ -104,7 +105,8 @@ class FisCrawlerTests(unittest.TestCase):
                 "codex",
                 "place",
                 "hill",
-                "category",
+                "cat1",
+                "cat2",
                 "gender",
                 "EventNr",
             ),
@@ -125,6 +127,43 @@ class FisCrawlerTests(unittest.TestCase):
         self.assertEqual(rows[1][1], 46319)
         self.assertEqual([row[-1] for row in rows[1:]], [1, 2, 3])
 
+    def test_rows_are_sorted_by_event_number_then_codex(self):
+        rows = sheet_rows(
+            [
+                record("0010", date(2026, 12, 12), category="WC", place="Titisee"),
+                record("0011", date(2026, 12, 13), category="WC", place="Titisee"),
+                record("0012", date(2026, 12, 12), "W", "WC", place="Titisee"),
+                record("0321", date(2026, 12, 11), category="WC", place="Titisee"),
+            ]
+        )
+        self.assertEqual(
+            [(row[-1], row[4]) for row in rows[1:]],
+            [(1, "0010"), (1, "0011"), (1, "0321"), (2, "0012")],
+        )
+
+    def test_cat2_turns_qualifications_into_gp_or_wc(self):
+        self.assertEqual(second_category("QUA", date(2026, 5, 1)), "GP")
+        self.assertEqual(second_category("QUA", date(2026, 10, 31)), "GP")
+        self.assertEqual(second_category("QUA", date(2026, 11, 1)), "WC")
+        self.assertEqual(second_category("QUA", date(2027, 4, 30)), "WC")
+        self.assertEqual(second_category("COC", date(2026, 8, 1)), "COC")
+        rows = sheet_rows([record("0275", date(2026, 10, 24), "W", "QUA")])
+        self.assertEqual(rows[1][7:9], ["QUA", "GP"])
+
+    def test_championship_qualification_joins_the_championship(self):
+        rows = sheet_rows(
+            [
+                record("0064", date(2027, 2, 26), "W", "WSC", place="Falun", hill="NH"),
+                record("0065", date(2027, 2, 26), "W", "QUA", place="Falun", hill="NH"),
+                record("0071", date(2027, 3, 5), "W", "QUA", place="Falun", hill="LH"),
+                record("0072", date(2027, 3, 5), "W", "WSC", place="Falun", hill="LH"),
+            ]
+        )
+        self.assertEqual(
+            [(row[4], row[8], row[-1]) for row in rows[1:]],
+            [("0064", "WSC", 1), ("0065", "WSC", 1), ("0071", "WSC", 2), ("0072", "WSC", 2)],
+        )
+
     def test_event_numbers_group_competitions_of_one_event(self):
         records = [
             record("0001", date(2026, 11, 20), category="QUA", place="Ruka"),
@@ -143,12 +182,10 @@ class FisCrawlerTests(unittest.TestCase):
                 event_numbers(records),
             )
         )
+        # the qualification (cat2 WC) belongs to the World Cup event
+        self.assertEqual(numbers["0001"], numbers["0002"])
         self.assertEqual(numbers["0002"], numbers["0003"])
-        self.assertEqual(
-            len({numbers[codex] for codex in ("0001", "0002", "0004", "0005", "0006", "0007")}),
-            6,
-        )
-        self.assertEqual(list(numbers.values()), [1, 2, 2, 3, 4, 5, 6])
+        self.assertEqual(list(numbers.values()), [1, 1, 1, 2, 3, 4, 5])
 
     def test_no_records_leave_the_workbook_untouched(self):
         excel = MagicMock()
@@ -226,7 +263,7 @@ class FisCrawlerTests(unittest.TestCase):
             self.assertEqual(len(rows), 3)
             self.assertEqual(rows[1][1].date(), date(2026, 10, 24))
             self.assertEqual(rows[1][2:7], ("62788", "7278", "0278", "Klingenthal", "LH"))
-            self.assertEqual(sheet.auto_filter.ref, "A1:J3")
+            self.assertEqual(sheet.auto_filter.ref, "A1:K3")
             self.assertEqual([row[-1] for row in rows[1:]], [1, 2])
             for title, values in other_sheets.items():
                 self.assertEqual(

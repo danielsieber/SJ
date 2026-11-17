@@ -133,6 +133,8 @@ def read_workbook_candidates(workbook_path: Path, codex: str) -> list[Candidate]
                     f"Spalten fehlen im Sheet '{name}': {', '.join(sorted(missing))}"
                 )
 
+            # SJ-Listen.xlsm names the FIS category cat1, old raceid.xlsx category.
+            category_column = columns.get("cat1", columns.get("category"))
             for row in rows:
                 raw_codex = _cell_text(row[columns["codex"]])
                 if not raw_codex or raw_codex.zfill(4) != codex:
@@ -158,8 +160,8 @@ def read_workbook_candidates(workbook_path: Path, codex: str) -> list[Candidate]
                     place=_cell_text(row[columns["place"]]) if "place" in columns else "",
                     event_date=event_date,
                     category=(
-                        _cell_text(row[columns["category"]])
-                        if "category" in columns
+                        _cell_text(row[category_column])
+                        if category_column is not None
                         else ""
                     ),
                 )
