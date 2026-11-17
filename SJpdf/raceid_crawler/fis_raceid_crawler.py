@@ -184,10 +184,12 @@ def event_numbers(records: list[dict]) -> list[int]:
     One event (e.g. World Cup men in Klingenthal: qualification, Saturday and
     Sunday) has the same season, place, cat2, gender and hill type (NH/LH/FH)
     and all its competitions lie within 5 calendar days of the first one.
+    Events are numbered by the date of their last competition, then their
+    first competition and their smallest codex.
     """
-    numbers = []
+    groups = []
     last_number = 0
-    open_events = {}  # key -> (number, date of the first competition)
+    open_events = {}  # key -> (group, date of the first competition)
     for record, category_2 in zip(records, second_categories(records)):
         key = (
             record["season"],
@@ -201,8 +203,21 @@ def event_numbers(records: list[dict]) -> list[int]:
             last_number += 1
             current = (last_number, record["date"])
             open_events[key] = current
-        numbers.append(current[0])
-    return numbers
+        groups.append(current[0])
+
+    members = {}
+    for group, record in zip(groups, records):
+        members.setdefault(group, []).append(record)
+    order = sorted(
+        members,
+        key=lambda group: (
+            max(record["date"] for record in members[group]),
+            min(record["date"] for record in members[group]),
+            min(int(record["codex"]) for record in members[group]),
+        ),
+    )
+    number_of = {group: number for number, group in enumerate(order, start=1)}
+    return [number_of[group] for group in groups]
 
 
 def second_category(category: str, competition_date: date, championship: str | None = None) -> str:
@@ -244,7 +259,7 @@ def second_categories(records: list[dict]) -> list[str]:
 
 
 def sheet_rows(records: list[dict]) -> list[list]:
-    """Header and records sorted by EventNr and codex, as Excel values.
+    """Header and records sorted by EventNr, date and codex, as Excel values.
 
     EventNr counts the events in date order. Dates become Excel serial numbers
     (shown as yyyy-mm-dd), so no time zone conversion can shift them.
@@ -252,7 +267,7 @@ def sheet_rows(records: list[dict]) -> list[list]:
     records = _sorted(records)
     numbered = sorted(
         zip(event_numbers(records), records, second_categories(records)),
-        key=lambda item: (item[0], int(item[1]["codex"])),
+        key=lambda item: (item[0], item[1]["date"], int(item[1]["codex"])),
     )
     rows = [list(HEADERS)]
     for number, record, category_2 in numbered:

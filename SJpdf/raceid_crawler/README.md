@@ -18,7 +18,7 @@ gecrawlten Saison. Die Spalten sind `season`, `date`, `eventid`, `raceid`,
 `codex`, `place`, `hill`, `cat1`, `cat2`, `gender` (Gender `M`, `W` oder `A` für
 Mixed, zum Beispiel Teamwettkämpfe) und `EventNr`. Das FIS-Datum ist ein Excel-Datum
 (`yyyy-mm-dd`), `eventid`, `raceid` und `codex` sind Text (führende Nullen
-bleiben). Die Zeilen sind nach `EventNr` und innerhalb nach Codex sortiert,
+bleiben). Die Zeilen sind nach `EventNr`, innerhalb nach Datum und dann nach Codex sortiert,
 mit Filter über den ganzen Bereich.
 
 `hill` ist der Schanzentyp aus der FIS-Beschreibung des Wettkampfs, z. B.
@@ -32,7 +32,8 @@ Meisterschaft, zu der sie gehört (`OWG`, `WSC`, `SFWC` oder `WJC` am selben Ort
 mit gleichem Gender und `hill`, innerhalb von 5 Kalendertagen), sonst `GP` (Mai
 bis Oktober) bzw. `WC` (übrige Monate).
 
-`EventNr` nummeriert die Wettkampfserien in Datumsreihenfolge: Wettkämpfe mit
+`EventNr` nummeriert die Wettkampfserien nach dem Datum ihres letzten
+Wettkampfs (bei Gleichstand nach dem ersten Wettkampf, dann Codex): Wettkämpfe mit
 gleichem Ort, gleichem `cat2`, gleichem Gender und gleichem `hill` innerhalb von
 5 Kalendertagen ab dem ersten Wettkampf erhalten dieselbe Nummer. Die
 Qualifikation gehört so zur Serie ihres Weltcups bzw. Grand Prix.

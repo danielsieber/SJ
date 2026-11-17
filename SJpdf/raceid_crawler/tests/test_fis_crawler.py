@@ -127,7 +127,7 @@ class FisCrawlerTests(unittest.TestCase):
         self.assertEqual(rows[1][1], 46319)
         self.assertEqual([row[-1] for row in rows[1:]], [1, 2, 3])
 
-    def test_rows_are_sorted_by_event_number_then_codex(self):
+    def test_rows_are_sorted_by_event_number_date_and_codex(self):
         rows = sheet_rows(
             [
                 record("0010", date(2026, 12, 12), category="WC", place="Titisee"),
@@ -138,7 +138,8 @@ class FisCrawlerTests(unittest.TestCase):
         )
         self.assertEqual(
             [(row[-1], row[4]) for row in rows[1:]],
-            [(1, "0010"), (1, "0011"), (1, "0321"), (2, "0012")],
+            # women end on 12 Dec, men on 13 Dec
+            [(1, "0012"), (2, "0321"), (2, "0010"), (2, "0011")],
         )
 
     def test_cat2_turns_qualifications_into_gp_or_wc(self):
@@ -185,7 +186,8 @@ class FisCrawlerTests(unittest.TestCase):
         # the qualification (cat2 WC) belongs to the World Cup event
         self.assertEqual(numbers["0001"], numbers["0002"])
         self.assertEqual(numbers["0002"], numbers["0003"])
-        self.assertEqual(list(numbers.values()), [1, 1, 1, 2, 3, 4, 5])
+        # numbered by the last day: Lillehammer (21 Nov) before Ruka (22 Nov)
+        self.assertEqual(list(numbers.values()), [2, 2, 2, 3, 4, 5, 1])
 
     def test_no_records_leave_the_workbook_untouched(self):
         excel = MagicMock()
@@ -258,7 +260,8 @@ class FisCrawlerTests(unittest.TestCase):
                 warnings.simplefilter("ignore", UserWarning)
                 after = load_workbook(path, keep_vba=True)
             sheet = after[SHEET_NAME]
-            rows = list(sheet.iter_rows(values_only=True))
+            # empty rows that keep only a row format (e.g. height) are ignored
+            rows = [row for row in sheet.iter_rows(values_only=True) if any(row)]
             self.assertEqual(rows[0], HEADERS)
             self.assertEqual(len(rows), 3)
             self.assertEqual(rows[1][1].date(), date(2026, 10, 24))
