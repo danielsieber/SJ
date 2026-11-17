@@ -46,7 +46,8 @@ The sheet `Ranglisten` (`pdf2xlsx_Ranglisten.py`) combines all rounds in jump
 order. Its columns are the same on every run (it is loaded into a database
 later): A:H athlete and status, I:AB the values of the round (Speed ...
 Round Rank), AC `Total` (only in the second competition round), AD `JumpID`,
-AE `PDF` (source PDF of the row).
+AE `JumperID`, AF `Date` (yyyy-mm-dd) and AG `Time` (hh:mm:ss) of the jump,
+AH `PDF` (source PDF of the row).
 
 - Rounds follow the `Daten` order (date, start time); a PDF with two rounds
   gives two blocks. `JumpID` is the competition name, the round number and
@@ -67,13 +68,36 @@ AE `PDF` (source PDF of the row).
 - Status: `DSQ`, `DNS`, `NPS` for the round concerned; `Not Qualified` when
   the athlete may not start in the next round.
 - If RL1 is missing, the first round is taken from RL and a warning is shown.
+- `Date` is the date of the round's PDF. `Time`: the first jumper of a round
+  gets the start time, the last one the end time of the round (`Start Time n`,
+  `End Time n` of DG n in `Daten`; RL1 holds round 1, RL round 2), the jumpers
+  in between are spaced evenly. A PDF without weather block (e.g. a
+  qualification) uses `Start Time` and `Finish Time`. Rows without a jump
+  (DNS, Not Qualified, ...) get no time.
+
+Jumpers and hills are checked against `SJ-Listen.xlsm` in the SJpdf data
+folder (`pdf2xlsx_Listen.py`; the file is only read, it may be open in Excel):
+
+- `JumperID` in `Ranglisten` comes from `Liste_Springer_ID`, found by
+  name and NSA. A jumper who is not listed gets an empty light-red JumperID
+  cell and a red warning
+  in `Notes` with a proposed ID (NSA, first five letters of the first and of
+  the second word of the name, e.g. `AUT ACHLE ALEXA`). When all are listed,
+  `Notes` says so.
+- `Pts / Gate DGW` in `Daten` (row below `TWC`) is the value
+  `Pts / Gate für DGW` of the hill in `Liste_Schanzen_ID`, found by place
+  and hill size (SchanzenID `Einsiedeln HS117`). `Notes` shows whether the
+  SchanzenID was found (a missing one is a red warning), above the JumperID
+  line.
+- If `SJ-Listen.xlsm` cannot be read, there is a red warning and the
+  conversion goes on without JumperID and Pts / Gate DGW.
 
 Besides `latest event.xlsx`, the same workbook is saved as
 `<last date> <type><gender> <place> HS<hill size>.xlsx`, for example
 `2026-09-13 FCM Einsiedeln HS117.xlsx` (types FC, WC, GP, COC, ICOC, AC;
 gender M, W, A for mixed).
 
-The sheet `Notes` (last sheet, active when the workbook is opened) shows the
+The sheet `Notes` (first sheet, active when the workbook is opened) shows the
 time of the run, the folder and file name of the workbook (Excel formulas,
 so they are correct for both files), the name of the competition copy, the
 PDF folder, all warnings and

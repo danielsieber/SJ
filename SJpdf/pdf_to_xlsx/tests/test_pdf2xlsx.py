@@ -276,7 +276,7 @@ class WorkbookTests(unittest.TestCase):
                 create_workbook([source_pdf], output_file)
 
             workbook = load_workbook(output_file, data_only=True)
-            self.assertEqual(workbook.sheetnames, ["Daten", "Ranglisten", "2027JP0276RLT", "Notes"])
+            self.assertEqual(workbook.sheetnames, ["Notes", "Daten", "Ranglisten", "2027JP0276RLT"])
             worksheet = workbook["Daten"]
             self.assertEqual(worksheet["A1"].value, "pdf")
             self.assertEqual(worksheet["B1"].value, "2027JP0276RLT")
@@ -284,16 +284,17 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(worksheet["B2"].value, "FIS SKI JUMPING GRAND PRIX")
             self.assertEqual(worksheet["A4"].value, "Datum")
             self.assertEqual(worksheet["B4"].number_format, "yyyy-mm-dd")
-            self.assertEqual(worksheet["A19"].value, "DG 1")
-            self.assertEqual(worksheet["A24"].value, "Length 1")
-            self.assertEqual(worksheet["A49"].value, "Footer Datum")
-            self.assertEqual(worksheet["A51"].value, "Footer Codex")
+            self.assertEqual(worksheet["A19"].value, "Pts / Gate DGW")
+            self.assertEqual(worksheet["A20"].value, "DG 1")
+            self.assertEqual(worksheet["A25"].value, "Length 1")
+            self.assertEqual(worksheet["A50"].value, "Footer Datum")
+            self.assertEqual(worksheet["A52"].value, "Footer Codex")
             self.assertEqual(worksheet["A1"].alignment.horizontal, "left")
             self.assertEqual(worksheet["B4"].alignment.horizontal, "left")
             self.assertEqual(worksheet["A11"].font.color.rgb, "FF0000FF")
             self.assertEqual(worksheet["B11"].font.color.rgb, "FF0000FF")
             self.assertEqual(worksheet.freeze_panes, "B12")
-            for row in (19, 29, 39, 49):
+            for row in (20, 30, 40, 50):
                 self.assertEqual(worksheet.cell(row=row, column=1).fill.fgColor.rgb, "FFD9D9D9")
             self.assertEqual(worksheet.max_column, 2)
             workbook.close()
@@ -342,7 +343,7 @@ class WorkbookTests(unittest.TestCase):
                 create_workbook([], output_file)
 
             workbook = load_workbook(output_file, data_only=True)
-            self.assertEqual(workbook.sheetnames, ["Daten", "Notes"])
+            self.assertEqual(workbook.sheetnames, ["Notes", "Daten"])
             self.assertEqual(workbook["Daten"]["A1"].value, "keep")
             self.assertEqual(workbook["Daten"].max_column, 1)
             workbook.close()
@@ -413,7 +414,7 @@ class WorkbookTests(unittest.TestCase):
 
             self.assertEqual(result, 1)
             workbook = load_workbook(output_file, data_only=True)
-            self.assertEqual(workbook.sheetnames, ["Daten", "Notes"])
+            self.assertEqual(workbook.sheetnames, ["Notes", "Daten"])
             self.assertEqual(workbook["Daten"]["A1"].value, "keep")
             self.assertEqual(workbook["Daten"].max_column, 1)
             workbook.close()

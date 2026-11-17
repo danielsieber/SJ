@@ -5,7 +5,9 @@ rows in start order. The columns are fixed (RANGLISTEN_COLUMNS) on every
 run, because the sheet is later loaded into a database:
 
 - A:H identity and status, I:AB the round values (without round number),
-  AC Total (only in the second competition round), AD JumpID, AE PDF.
+  AC Total (only in the second competition round), AD JumpID, AE JumperID
+  (from Liste_Springer_ID in SJ-Listen.xlsm; light red when missing), AF Date
+  and AG Time of the jump (from Daten, see pdf2xlsx.py), AH PDF.
 - JumpID is the competition name plus the round number and type, e.g.
   '2026-09-13 FCM Einsiedeln HS117 01T', so it is unique in a database.
 
@@ -23,7 +25,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Sequence
 
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.workbook import Workbook
 
 if __package__:
@@ -46,7 +48,13 @@ else:
 
 SHEET_NAME = "Ranglisten"
 IDENTITY_FIELDS = RESULT_COLUMNS[:8]
-RANGLISTEN_COLUMNS = (*IDENTITY_FIELDS, *ROUND_FIELDS, "Total", "JumpID", "PDF")
+RANGLISTEN_COLUMNS = (
+    *IDENTITY_FIELDS, *ROUND_FIELDS, "Total", "JumpID", "JumperID", "Date", "Time", "PDF",
+)
+ROUND_KEY = "_round"  # round number in the source PDF (DG n in Daten), not a column
+EMPTY_FILL = PatternFill(fill_type="solid", fgColor="FFFFC7CE")  # light red
+DATE_FORMAT = "yyyy-mm-dd"
+TIME_FORMAT = "hh:mm:ss"
 ROUND_TYPES = {"RLT": "T", "RLQ": "Q", "RTRIA": "P", "RL": "W"}
 KIND_PATTERN = re.compile(r"(RLT|RLQ|RTRIA|RL)$", re.I)
 FIRST_ROUND_REMARK = re.compile(r"\b1st round\b", re.I)
@@ -292,12 +300,14 @@ def build_ranglisten(
         rounds = (
             _competition_rounds(pdf, warnings) if kind == "RL" else _simple_rounds(pdf)
         )
-        for source, round_rows in rounds:
+        for round_number, (source, round_rows) in enumerate(rounds, start=1):
             jump_number += 1
             for values in round_rows:
                 row = {key: values.get(key) for key in RANGLISTEN_COLUMNS}
                 row["JumpID"] = f"{competition} {jump_number:02d}{ROUND_TYPES[kind]}"
                 row["PDF"] = source
+                # Competition: RL1 holds round 1 (DG 1), RL round 2 (DG 2).
+                row[ROUND_KEY] = round_number
                 rows.append(row)
     return rows, warnings
 
@@ -310,15 +320,17 @@ def write_ranglisten_sheet(workbook: Workbook, rows: list[dict[str, Any]]) -> No
         cell.fill = HEADER_FILL
         cell.alignment = Alignment(horizontal="center")
         worksheet.column_dimensions[cell.column_letter].width = {
-            "Name": 26, "Club": 30, "Date of Birth": 12, "Status": 13, "JumpID": 36, "PDF": 16,
+            "Name": 26, "Club": 30, "Date of Birth": 12, "Status": 13, "JumpID": 36, "JumperID": 17, "Date": 11, "PDF": 16,
         }.get(key, 9)
     for row_number, values in enumerate(rows, start=2):
         for column, key in enumerate(RANGLISTEN_COLUMNS, start=1):
             value = values.get(key)
             if value is None:
+                if key == "JumperID":
+                    worksheet.cell(row=row_number, column=column).fill = EMPTY_FILL
                 continue
             cell = worksheet.cell(row=row_number, column=column, value=value)
-            number_format = NUMBER_FORMATS.get(key)
+            number_format = {"Date": DATE_FORMAT, "Time": TIME_FORMAT}.get(key) or NUMBER_FORMATS.get(key)
             if number_format:
                 cell.number_format = number_format
     worksheet.freeze_panes = "D2"

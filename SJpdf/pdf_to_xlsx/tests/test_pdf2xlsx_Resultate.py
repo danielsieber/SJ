@@ -101,7 +101,7 @@ class ResultsSheetTests(unittest.TestCase):
             self.assertIn("2027JP0281RL.pdf: result check failed", warnings)
             self.assertTrue(warnings[-1].startswith("Ranglisten: not created"))
             workbook = load_workbook(output_file)
-            self.assertEqual(workbook.sheetnames, ["Daten", "Ranglisten", "2027JP0281RL", "Notes"])
+            self.assertEqual(workbook.sheetnames, ["Notes", "Daten", "Ranglisten", "2027JP0281RL"])
             self.assertIn("not created", workbook["Ranglisten"]["A1"].value)
             self.assertIn("result check failed", workbook["2027JP0281RL"]["A1"].value)
             workbook.close()

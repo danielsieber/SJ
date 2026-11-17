@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from copy import copy
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 import re
 import sys
 from pathlib import Path
@@ -18,8 +18,12 @@ from sj_paths import DATA_DIRECTORY  # noqa: E402
 
 if __package__:
     from .pdf2xlsx_Daten import DATA_ROWS, PdfParseError, extract_data
+    from .pdf2xlsx_Listen import (
+        SJ_LISTEN_FILE, ListenError, SjListen, hill_name, proposed_jumper_id, read_sj_listen,
+    )
     from .pdf2xlsx_Notes import LINK_FONT, Note, read_pdf_links, write_notes_sheet
     from .pdf2xlsx_Ranglisten import (
+        ROUND_KEY,
         SHEET_NAME as RANGLISTEN_SHEET,
         PdfResults,
         RanglistenError,
@@ -41,8 +45,12 @@ if __package__:
     )
 else:
     from pdf2xlsx_Daten import DATA_ROWS, PdfParseError, extract_data
+    from pdf2xlsx_Listen import (
+        SJ_LISTEN_FILE, ListenError, SjListen, hill_name, proposed_jumper_id, read_sj_listen,
+    )
     from pdf2xlsx_Notes import LINK_FONT, Note, read_pdf_links, write_notes_sheet
     from pdf2xlsx_Ranglisten import (
+        ROUND_KEY,
         SHEET_NAME as RANGLISTEN_SHEET,
         PdfResults,
         RanglistenError,
@@ -77,7 +85,11 @@ UNAVAILABLE_FIELD_FILL = PatternFill(
 )
 SECTION_FILL = PatternFill(fill_type="solid", fgColor="FFD9D9D9")
 RANGLISTE_FONT_COLOR = "FF0000FF"
-GRAY_ROWS = (19, 29, 39, 49)
+# Section rows of Daten: the rounds and the footer.
+GRAY_ROWS = tuple(
+    DATA_ROWS.index(key) + 2 for key in ("DG 1", "DG 2", "DG 3", "Footer Datum")
+)
+DGW_ROW = "Pts / Gate DGW"
 
 
 def default_pdf_directory() -> Path:
@@ -230,11 +242,136 @@ def _add_result_sheets(
     return pdf_results
 
 
+def _read_listen(listen_file: Path | None, notes: list[Note]) -> SjListen | None:
+    """SJ-Listen.xlsm or None (with a warning) when it cannot be read."""
+    if listen_file is None:
+        return None
+    try:
+        return read_sj_listen(listen_file)
+    except ListenError as error:
+        notes.append(Note(
+            "Warnung",
+            f"SJ-Listen: {error} JumperID und {DGW_ROW} wurden nicht ermittelt.",
+        ))
+        return None
+
+
+def _add_hill_values(
+    extracted: Sequence[tuple[Path, dict]], listen: SjListen | None, notes: list[Note]
+) -> None:
+    """Set 'Pts / Gate DGW' of each PDF from Liste_Schanzen_ID."""
+    if listen is None:
+        return
+    found: dict[str, object] = {}
+    missing: dict[str, None] = {}
+    for pdf_path, values in extracted:
+        hill = hill_name(values.get("Place"), values.get("Hill Size"))
+        if hill is None:
+            missing.setdefault(f"von {pdf_path.stem} (Place oder Hill Size fehlt)", None)
+        elif not listen.has_hill(hill):
+            missing.setdefault(hill, None)
+        elif not isinstance(listen.dgw(hill), (int, float)):
+            notes.append(Note(
+                "Warnung",
+                f"Daten: SchanzenID {hill} hat in Liste_Schanzen_ID keinen Wert "
+                f"'Pts / Gate für DGW'.",
+            ))
+        else:
+            values[DGW_ROW] = listen.dgw(hill)
+            found[hill] = values[DGW_ROW]
+    for hill in missing:
+        notes.append(Note(
+            "Warnung", f"Daten: SchanzenID {hill} fehlt in Liste_Schanzen_ID (SJ-Listen.xlsm)."
+        ))
+    for hill, value in found.items():
+        notes.append(Note(
+            "Info",
+            f"Daten: SchanzenID {hill} in Liste_Schanzen_ID gefunden, {DGW_ROW} {value:g}.",
+        ))
+
+
+def _add_jumper_ids(rows: list[dict], listen: SjListen | None, notes: list[Note]) -> None:
+    """Set JumperID of each Ranglisten row from Liste_Springer_ID."""
+    if listen is None:
+        return
+    missing: dict[tuple, None] = {}
+    for row in rows:
+        row["JumperID"] = listen.jumper_id(row.get("Name"), row.get("NSA"))
+        if row["JumperID"] is None:
+            missing.setdefault((row.get("Name"), row.get("NSA")), None)
+    for name, nsa in missing:
+        notes.append(Note(
+            "Warnung",
+            f"Ranglisten: JumperID fehlt in Liste_Springer_ID: {name} ({nsa}), "
+            f"Vorschlag '{proposed_jumper_id(name, nsa)}'.",
+        ))
+    if not missing:
+        notes.append(Note("Info", "Ranglisten: Alle JumperID in SJ-Listen.xlsm vorhanden."))
+
+
+def _clock(text: object) -> time | None:
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", str(text or "").strip())
+    if not match:
+        return None
+    hours, minutes, seconds = (int(part or 0) for part in match.groups())
+    return time(hours, minutes, seconds) if hours < 24 and minutes < 60 and seconds < 60 else None
+
+
+def _add_jump_times(
+    rows: list[dict], values_by_stem: dict[str, dict], warnings: list[str]
+) -> None:
+    """Date and time of each jump.
+
+    The date of a round is the Datum of its PDF. The first jumper of a round
+    gets the start time, the last one the end time of the round (DG n in
+    Daten); the jumpers in between are spaced evenly. Rows without a jump
+    (DNS, Not Qualified, ...) get the date but no time.
+    """
+    blocks: dict[str, list[dict]] = {}
+    for row in rows:
+        blocks.setdefault(row["JumpID"], []).append(row)
+    for jump_id, block in blocks.items():
+        source = block[0]["PDF"]
+        number = block[0][ROUND_KEY]
+        values = values_by_stem.get(source, {})
+        day = values.get("Datum")
+        for row in block:
+            row["Date"] = day if isinstance(day, date) else None
+        jumpers = [row for row in block if row.get("Distance") is not None]
+        if not jumpers:
+            continue
+        start, end = _clock(values.get(f"Start Time {number}")), _clock(values.get(f"End Time {number}"))
+        if start is None and end is None and number == 1 and values.get("DG 1") is None:
+            # No weather block (e.g. qualification): the times of the header.
+            start, end = _clock(values.get("Start Time")), _clock(values.get("Finish Time"))
+        if not isinstance(day, date) or start is None or end is None:
+            warnings.append(
+                f"{source}: date, start or end time of round {number} missing in Daten; "
+                f"no jump times for {jump_id}."
+            )
+            continue
+        first = datetime.combine(day, start)
+        duration = datetime.combine(day, end) - first
+        if duration < timedelta(0):
+            warnings.append(
+                f"{source}: end time of round {number} is before its start time; "
+                f"no jump times for {jump_id}."
+            )
+            continue
+        step = duration / (len(jumpers) - 1) if len(jumpers) > 1 else timedelta(0)
+        for index, row in enumerate(jumpers):
+            moment = first + step * index
+            row["Time"] = (moment + timedelta(microseconds=500_000)).replace(microsecond=0).time()
+
+
 def _add_ranglisten(
     workbook: Workbook,
     pdf_results: list[PdfResults] | None,
     competition: str | None,
     warnings: list[str],
+    listen: SjListen | None = None,
+    notes: list[Note] | None = None,
+    values_by_stem: dict[str, dict] | None = None,
 ) -> None:
     message = None
     if pdf_results is None:
@@ -254,10 +391,17 @@ def _add_ranglisten(
         workbook.move_sheet(RANGLISTEN_SHEET, 1 - workbook.sheetnames.index(RANGLISTEN_SHEET))
         return
     warnings.extend(ranglisten_warnings)
+    _add_jumper_ids(rows, listen, notes if notes is not None else [])
+    _add_jump_times(rows, values_by_stem or {}, warnings)
     write_ranglisten_sheet(workbook, rows)
 
 
-def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> list[str]:
+_DEFAULT = object()
+
+
+def create_workbook(
+    pdf_paths: Sequence[Path], output_file: Path, listen_file=_DEFAULT
+) -> list[str]:
     """Extract each PDF once and save the selected fields in separate columns.
 
     Every PDF also gets its own sheet (named like the PDF) with the result
@@ -271,7 +415,12 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> list[str]:
     (e.g. '2026-09-13 FCM Einsiedeln HS117.xlsx') is saved in the same
     folder. When there are no PDFs or a PDF cannot be read, the cleared
     workbook is saved so no outdated results remain.
+
+    Jumpers (JumperID in Ranglisten) and hills (Pts / Gate DGW in Daten) are
+    looked up in listen_file (default SJ-Listen.xlsm; None: no lookup).
     """
+    if listen_file is _DEFAULT:
+        listen_file = SJ_LISTEN_FILE
     created = datetime.now().replace(microsecond=0)
     workbook = _cleared_workbook(output_file)
     worksheet = workbook["Daten"]
@@ -302,6 +451,11 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> list[str]:
             workbook.save(output_file)
             raise
 
+        warnings: list[str] = []
+        listen_notes: list[Note] = []  # SJ-Listen: hill first, then jumpers
+        listen = _read_listen(listen_file, listen_notes)
+        _add_hill_values(extracted, listen, listen_notes)
+
         worksheet["A1"] = "pdf"
 
         for column, (pdf_path, values) in enumerate(extracted, start=2):
@@ -309,6 +463,7 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> list[str]:
             for row, key in enumerate(DATA_ROWS, start=2):
                 cell = worksheet.cell(row=row, column=1, value=key)
                 cell.font = Font(bold=True)
+                cell.fill = PatternFill(fill_type=None)  # old section rows of column A
                 value = values.get(key)
                 value_cell = worksheet.cell(row=row, column=column, value=value)
                 if value is None:
@@ -359,14 +514,16 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> list[str]:
             for cell in worksheet[row]:
                 cell.fill = SECTION_FILL
 
-        warnings: list[str] = []
         try:
             name = competition_file_name([values for _path, values in extracted])
         except RanglistenError as error:
             name = None
             warnings.append(f"No competition copy saved: {error}")
         pdf_results = _add_result_sheets(workbook, extracted, warnings)
-        _add_ranglisten(workbook, pdf_results, name, warnings)
+        _add_ranglisten(
+            workbook, pdf_results, name, warnings, listen, listen_notes,
+            {path.stem: values for path, values in extracted},
+        )
 
         worksheet.freeze_panes = "B12"
         worksheet.column_dimensions["A"].width = 20
@@ -375,7 +532,8 @@ def create_workbook(pdf_paths: Sequence[Path], output_file: Path) -> list[str]:
                 worksheet.cell(row=1, column=column).column_letter
             ].width = 32
 
-        notes = [Note("Warnung", warning) for warning in warnings] + notes
+        notes = [Note("Warnung", warning) for warning in warnings] + listen_notes + notes
+        warnings = warnings + [note.message for note in listen_notes if note.kind == "Warnung"]
         copy_name = f"{name}.xlsx" if name is not None else None
         write_notes_sheet(workbook, created, pdf_links, notes, copy_name)
         workbook.save(output_file)

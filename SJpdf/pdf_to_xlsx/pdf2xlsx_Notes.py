@@ -1,7 +1,7 @@
 """Sheet 'Notes': where the files are and what the program noticed.
 
-The sheet is rewritten on every run and is the active sheet when the
-workbook is opened, so warnings are seen at once.
+The sheet is rewritten on every run. It is the first and the active sheet
+when the workbook is opened, so warnings are seen at once.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ LINKS_FILENAME = "pdf_links.csv"  # written by pdf_download/FIS_pdf-download.py
 HEADER_FILL = PatternFill(fill_type="solid", fgColor="FFD9D9D9")
 WARNING_FILL = PatternFill(fill_type="solid", fgColor="FFFFC7CE")
 LINK_FONT = Font(color="FF0563C1", underline="single")
-SOURCE_PATTERN = re.compile(r"^(\d{4}JP\d{4}[A-Z0-9]*|Ranglisten)\b", re.I)
+SOURCE_PATTERN = re.compile(r"^(\d{4}JP\d{4}[A-Z0-9]*|Ranglisten|Daten|SJ-Listen)\b", re.I)
 
 # Folder and file name of the workbook itself, calculated by Excel.
 FILENAME = 'CELL("filename",$A$1)'
@@ -65,12 +65,12 @@ def write_notes_sheet(
     notes: Sequence[Note],
     copy_name: str | None = None,
 ) -> None:
-    """Add the Notes sheet (last) and make it the active sheet.
+    """Add the Notes sheet (first) and make it the active sheet.
 
     copy_name is the file name of the competition copy (e.g.
     '2026-09-13 FCM Einsiedeln HS117.xlsx'), None when no copy was saved.
     """
-    worksheet = workbook.create_sheet(SHEET_NAME)
+    worksheet = workbook.create_sheet(SHEET_NAME, 0)
     bold = Font(bold=True)
     worksheet["A1"] = "Notes"
     worksheet["A1"].font = Font(bold=True, size=14)

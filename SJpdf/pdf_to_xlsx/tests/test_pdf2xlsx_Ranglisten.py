@@ -42,8 +42,11 @@ class ColumnTests(unittest.TestCase):
         self.assertEqual(letters["AB"], "Round Rank")
         self.assertEqual(letters["AC"], "Total")
         self.assertEqual(letters["AD"], "JumpID")
-        self.assertEqual(letters["AE"], "PDF")
-        self.assertEqual(len(RANGLISTEN_COLUMNS), 31)
+        self.assertEqual(letters["AE"], "JumperID")
+        self.assertEqual(letters["AF"], "Date")
+        self.assertEqual(letters["AG"], "Time")
+        self.assertEqual(letters["AH"], "PDF")
+        self.assertEqual(len(RANGLISTEN_COLUMNS), 34)
 
 
 class BuildTests(unittest.TestCase):
@@ -171,6 +174,8 @@ class FileNameTests(unittest.TestCase):
             "Place": "Einsiedeln (SUI)",
             "Hill Size": 117,
             "Datum": date(2026, 9, 12),
+            "Start Time": "13:30",
+            "Finish Time": "14:23",
             **extra,
         }
 
@@ -223,11 +228,11 @@ class WorkbookTests(unittest.TestCase):
             copy_file = Path(temporary_directory) / "2026-09-12 FCM Einsiedeln HS117.xlsx"
             self.assertTrue(copy_file.exists())
             workbook = load_workbook(copy_file)
-            self.assertEqual(workbook.sheetnames, ["Daten", "Ranglisten", "2027JP0281RLT", "Notes"])
+            self.assertEqual(workbook.sheetnames, ["Notes", "Daten", "Ranglisten", "2027JP0281RLT"])
             worksheet = workbook["Ranglisten"]
             self.assertEqual([c.value for c in worksheet[1]], list(RANGLISTEN_COLUMNS))
             self.assertEqual(worksheet["AD2"].value, "2026-09-12 FCM Einsiedeln HS117 01T")
-            self.assertEqual(worksheet["AE2"].value, "2027JP0281RLT")
+            self.assertEqual(worksheet["AH2"].value, "2027JP0281RLT")
             self.assertEqual(workbook["Notes"]["B6"].value, copy_file.name)
             workbook.close()
 
@@ -268,8 +273,8 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(
                 workbook.sheetnames,
                 [
-                    "Daten", "Ranglisten", "2027JP0281RLT", "2027JP0281SLR1", "2027JP0281RL1",
-                    "2027JP0281SLRF", "2027JP0281RL", "Notes",
+                    "Notes", "Daten", "Ranglisten", "2027JP0281RLT", "2027JP0281SLR1", "2027JP0281RL1",
+                    "2027JP0281SLRF", "2027JP0281RL"
                 ],
             )
             workbook.close()

@@ -28,6 +28,7 @@ DATA_ROWS = (
     "Gate Factor",
     "HWC",
     "TWC",
+    "Pts / Gate DGW",  # from Liste_Schanzen_ID in SJ-Listen.xlsm
     "DG 1",
     "Start Time 1",
     "End Time 1",
@@ -85,7 +86,7 @@ MONTHS = {
 GENDER_PATTERN = re.compile(r"\b(MEN|WOMEN|MIXED)\b", re.IGNORECASE)
 NUMBER = r"(-?\d+(?:[.,]\d+)?)"
 ROUND_PATTERN = re.compile(
-    r"\b(1st|first|2nd|second|3rd|third|trial)\s+round\b",
+    r"\b(1st|first|2nd|second|3rd|third|final|trial)\s+round\b",
     re.IGNORECASE,
 )
 
@@ -168,6 +169,16 @@ def _information_values(text: str) -> dict[str, Any]:
         rf"{NUMBER}\s+{NUMBER}\s+{NUMBER}m?\s+(.+?)\s+"
         rf"{NUMBER}\s+{NUMBER}\s+{NUMBER}\b",
         re.I,
+    )
+    # "Final Round" (e.g. World Cup, Grand Prix) is the round after the last
+    # numbered one: 1st Round, Final Round -> 1, 2.
+    round_numbers["final"] = 1 + max(
+        (
+            round_numbers[match.group(1).casefold()]
+            for match in round_matches
+            if match.group(1).casefold() in round_numbers
+        ),
+        default=0,
     )
     has_first_round = any(
         round_numbers[match.group(1).casefold()] == 1
