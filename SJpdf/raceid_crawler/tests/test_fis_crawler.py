@@ -2,9 +2,12 @@ from email.message import Message
 from io import BytesIO
 from datetime import date
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+import warnings
+import zipfile
 
 from urllib.error import HTTPError
 
@@ -13,21 +16,37 @@ from openpyxl import load_workbook
 from fis_raceid_crawler import (
     DEFAULT_OUTPUT_PATH,
     HEADERS,
+    SHEET_NAME,
+    WorkbookOpenError,
     _calendar_events,
     _competition_rows,
     _download,
-    write_workbook,
+    event_numbers,
+    sheet_rows,
+    write_event_sheet,
 )
+
+
+def record(codex, day, gender="M", category="GP", place="Klingenthal", hill="LH"):
+    return {
+        "season": 2027,
+        "date": day,
+        "eventid": "62788",
+        "raceid": str(7000 + int(codex)),
+        "codex": codex,
+        "place": place,
+        "category": category,
+        "gender": gender,
+        "hill": hill,
+    }
 
 
 class FisCrawlerTests(unittest.TestCase):
     def test_default_output_is_in_shared_data_directory(self):
         from sj_paths import DATA_DIRECTORY
 
-        self.assertEqual(
-            DEFAULT_OUTPUT_PATH,
-            DATA_DIRECTORY / "raceid" / "raceid.xlsx",
-        )
+        self.assertEqual(DEFAULT_OUTPUT_PATH, DATA_DIRECTORY / "SJ-Listen.xlsm")
+        self.assertEqual(SHEET_NAME, "Event_ID")
 
     def test_calendar_events_extract_event_id_and_place(self):
         html = """
@@ -71,6 +90,7 @@ class FisCrawlerTests(unittest.TestCase):
                     "place": "Predazzo",
                     "category": "FESA",
                     "gender": "M",
+                    "hill": "NH",
                 }
             ],
         )
@@ -83,74 +103,136 @@ class FisCrawlerTests(unittest.TestCase):
                 "raceid",
                 "codex",
                 "place",
+                "hill",
                 "category",
                 "gender",
+                "EventNr",
             ),
         )
 
-    def test_workbook_sorts_rows_and_puts_mixed_events_in_mixed_sheet(self):
+    def test_sheet_rows_are_sorted_with_header_and_excel_dates(self):
+        rows = sheet_rows(
+            [
+                record("0279", date(2026, 10, 25), "A"),
+                record("0278", date(2026, 10, 24)),
+                record("0275", date(2026, 10, 24), "W", "QUA"),
+            ]
+        )
+        self.assertEqual(rows[0], list(HEADERS))
+        self.assertEqual([row[4] for row in rows[1:]], ["0275", "0278", "0279"])
+        # Excel serial number of 2026-10-24
+        self.assertEqual(rows[1][1], (date(2026, 10, 24) - date(1899, 12, 30)).days)
+        self.assertEqual(rows[1][1], 46319)
+        self.assertEqual([row[-1] for row in rows[1:]], [1, 2, 3])
+
+    def test_event_numbers_group_competitions_of_one_event(self):
         records = [
-            {
-                "season": 2027,
-                "date": date(2026, 10, 25),
-                "eventid": "62788",
-                "raceid": "7757",
-                "codex": "0279",
-                "place": "Klingenthal",
-                "category": "GP",
-                "gender": "A",
-            },
-            {
-                "season": 2027,
-                "date": date(2026, 10, 24),
-                "eventid": "62788",
-                "raceid": "7756",
-                "codex": "0278",
-                "place": "Klingenthal",
-                "category": "GP",
-                "gender": "M",
-            },
-            {
-                "season": 2027,
-                "date": date(2026, 10, 24),
-                "eventid": "62788",
-                "raceid": "7755",
-                "codex": "0277",
-                "place": "Klingenthal",
-                "category": "GP",
-                "gender": "W",
-            },
-            {
-                "season": 2027,
-                "date": date(2026, 10, 24),
-                "eventid": "62788",
-                "raceid": "7753",
-                "codex": "0275",
-                "place": "Klingenthal",
-                "category": "QUA",
-                "gender": "W",
-            },
+            record("0001", date(2026, 11, 20), category="QUA", place="Ruka"),
+            record("0002", date(2026, 11, 21), place="Ruka", category="WC"),
+            record("0003", date(2026, 11, 22), place="Ruka", category="WC"),
+            record("0004", date(2026, 11, 22), "W", "WC", place="Ruka"),
+            # same place and category, but a different hill
+            record("0005", date(2026, 11, 23), place="Ruka", category="WC", hill="NH"),
+            # same place, category and gender, more than 5 days later
+            record("0006", date(2026, 11, 26), place="Ruka", category="WC"),
+            record("0007", date(2026, 11, 21), place="Lillehammer", category="WC"),
+        ]
+        numbers = dict(
+            zip(
+                [item["codex"] for item in records],
+                event_numbers(records),
+            )
+        )
+        self.assertEqual(numbers["0002"], numbers["0003"])
+        self.assertEqual(
+            len({numbers[codex] for codex in ("0001", "0002", "0004", "0005", "0006", "0007")}),
+            6,
+        )
+        self.assertEqual(list(numbers.values()), [1, 2, 2, 3, 4, 5, 6])
+
+    def test_no_records_leave_the_workbook_untouched(self):
+        excel = MagicMock()
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "SJ-Listen.xlsm"
+            path.touch()
+            with self.assertRaises(ValueError):
+                write_event_sheet([], path, excel_factory=lambda: excel)
+        excel.Workbooks.Open.assert_not_called()
+
+    def test_open_workbook_is_reported(self):
+        excel = MagicMock()
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "SJ-Listen.xlsm"
+            path.touch()
+            (Path(directory) / "~$SJ-Listen.xlsm").touch()
+            with self.assertRaises(WorkbookOpenError):
+                write_event_sheet(
+                    [record("0278", date(2026, 10, 24))], path, excel_factory=lambda: excel
+                )
+        excel.Workbooks.Open.assert_not_called()
+
+    def test_read_only_workbook_is_not_saved_and_excel_quits(self):
+        excel = MagicMock()
+        workbook = excel.Workbooks.Open.return_value
+        workbook.ReadOnly = True
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "SJ-Listen.xlsm"
+            path.touch()
+            with self.assertRaises(WorkbookOpenError):
+                write_event_sheet(
+                    [record("0278", date(2026, 10, 24))], path, excel_factory=lambda: excel
+                )
+        workbook.Save.assert_not_called()
+        workbook.Close.assert_called_once_with(False)
+        excel.Quit.assert_called_once()
+
+    def test_excel_writes_only_event_sheet(self):
+        source = DEFAULT_OUTPUT_PATH
+        try:
+            import win32com.client  # noqa: F401
+        except ImportError:
+            self.skipTest("pywin32 not installed")
+        if not source.is_file():
+            self.skipTest("SJ-Listen.xlsm not in the data folder")
+        from openpyxl import load_workbook
+
+        records = [
+            record("0279", date(2026, 10, 25), "A"),
+            record("0278", date(2026, 10, 24)),
         ]
         with TemporaryDirectory() as directory:
-            path = Path(directory) / "raceid.xlsx"
-            write_workbook(records, path)
-            workbook = load_workbook(path, read_only=True, data_only=True)
-            sheetnames = workbook.sheetnames
-            mixed_rows = list(workbook["mixed"].iter_rows(values_only=True))
-            all_codexes = [
-                row[4] for row in workbook["all"].iter_rows(min_row=2, values_only=True)
-            ]
-            women_codexes = [
-                row[4]
-                for row in workbook["women"].iter_rows(min_row=2, values_only=True)
-            ]
-            workbook.close()
+            path = Path(directory) / source.name
+            shutil.copy2(source, path)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                before = load_workbook(path, keep_vba=True)
+            other_sheets = {
+                sheet.title: [row for row in sheet.iter_rows(values_only=True)]
+                for sheet in before.worksheets
+                if sheet.title != SHEET_NAME
+            }
+            parts = set(zipfile.ZipFile(path).namelist())
+            before.close()
 
-        self.assertEqual(sheetnames, ["men", "women", "mixed", "all"])
-        self.assertEqual(len(mixed_rows), 2)
-        self.assertEqual(mixed_rows[1][4:], ("0279", "Klingenthal", "GP", "A"))
-        self.assertEqual(all_codexes, ["0275", "0277", "0278", "0279"])
-        self.assertEqual(women_codexes, ["0275", "0277"])
+            write_event_sheet(records, path)
+
+            self.assertEqual(set(zipfile.ZipFile(path).namelist()), parts)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                after = load_workbook(path, keep_vba=True)
+            sheet = after[SHEET_NAME]
+            rows = list(sheet.iter_rows(values_only=True))
+            self.assertEqual(rows[0], HEADERS)
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(rows[1][1].date(), date(2026, 10, 24))
+            self.assertEqual(rows[1][2:7], ("62788", "7278", "0278", "Klingenthal", "LH"))
+            self.assertEqual(sheet.auto_filter.ref, "A1:J3")
+            self.assertEqual([row[-1] for row in rows[1:]], [1, 2])
+            for title, values in other_sheets.items():
+                self.assertEqual(
+                    [row for row in after[title].iter_rows(values_only=True)], values
+                )
+            after.close()
 
     def test_calendar_without_event_list_reports_changed_page(self):
         with self.assertRaisesRegex(ValueError, "calendardata"):

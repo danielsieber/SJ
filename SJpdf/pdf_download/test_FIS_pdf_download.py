@@ -22,7 +22,7 @@ class PdfDownloadTests(unittest.TestCase):
         self.assertEqual(downloader.PDF_DIRECTORY, downloader.DATA_DIRECTORY / "pdf")
         self.assertEqual(
             downloader.RACEID_FILE,
-            downloader.DATA_DIRECTORY / "raceid" / "raceid.xlsx",
+            downloader.DATA_DIRECTORY / "SJ-Listen.xlsm",
         )
 
     def test_codex_is_padded_to_four_digits(self):
@@ -230,10 +230,12 @@ class PdfDownloadTests(unittest.TestCase):
 
     def test_workbook_lookup_preserves_padded_codex_and_event(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "raceid.xlsx"
+            path = Path(directory) / "SJ-Listen.xlsx"
             workbook = Workbook()
-            sheet = workbook.active
-            sheet.title = "all"
+            other = workbook.active
+            other.title = "Liste_Schanzen_ID"
+            other.append(["Schanzenverzeichnis", "Homologations"])
+            sheet = workbook.create_sheet("Event_ID")
             sheet.append(
                 [
                     "season",

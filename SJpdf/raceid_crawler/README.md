@@ -2,8 +2,9 @@
 
 Der Crawler liest den FIS-Kalender für Skispringen (`sectorcode=JP`) einer
 Saison, öffnet die Detailseiten der Veranstaltungen und speichert die
-Wettkämpfe in `raceid\raceid.xlsx` im SJpdf-Datenordner (siehe
-`SJpdf/README.md`). PDFs liegen im selben Datenordner unter `pdf`. Standardmäßig wird Saison 2027 verwendet.
+Wettkämpfe im Sheet `Event_ID` von `SJ-Listen.xlsm` im SJpdf-Datenordner
+(siehe `SJpdf/README.md`). PDFs liegen im selben Datenordner unter `pdf`.
+Standardmäßig wird die aktuelle Saison (2027) verwendet.
 
 Die FIS verwendet zwei unterschiedliche IDs:
 
@@ -12,11 +13,29 @@ Die FIS verwendet zwei unterschiedliche IDs:
 - `raceid` identifiziert den einzelnen Wettkampf und steht im Resultat-Link,
   zum Beispiel `raceid=7934` für Codex `0381`.
 
-Die Excel-Datei enthält die Sheets `men`, `women`, `mixed` und `all`. Die
-Spalten sind `season`, `date`, `eventid`, `raceid`, `codex`, `place`,
-`category` und `gender`. Das FIS-Datum wird als Excel-Datum gespeichert. Alle
-Sheets sind aufsteigend nach Saison, Datum und Codex sortiert. Im Sheet `mixed`
-stehen die Wettkämpfe mit Gender `A`, zum Beispiel Teamwettkämpfe.
+Jeder Lauf ersetzt den Inhalt von `Event_ID` durch die Wettkämpfe der
+gecrawlten Saison. Die Spalten sind `season`, `date`, `eventid`, `raceid`,
+`codex`, `place`, `hill`, `category`, `gender` (Gender `M`, `W` oder `A` für
+Mixed, zum Beispiel Teamwettkämpfe) und `EventNr`. Das FIS-Datum ist ein Excel-Datum
+(`yyyy-mm-dd`), `eventid`, `raceid` und `codex` sind Text (führende Nullen
+bleiben). Die Zeilen sind aufsteigend nach Saison, Datum und Codex sortiert,
+mit Filter über den ganzen Bereich.
+
+`hill` ist der Schanzentyp aus der FIS-Beschreibung des Wettkampfs, z. B.
+„Individual Large Hill“: `SH`, `MH`, `NH` (Normal Hill), `LH` (Large Hill) oder
+`FH` (Flying Hill). Die Schanzengrösse (HS) steht nicht auf den FIS-Seiten des
+Kalenders; sie steht erst in den Ergebnis-PDFs.
+
+`EventNr` nummeriert die Wettkampfserien fortlaufend: Wettkämpfe mit gleichem
+Ort, gleicher Kategorie, gleichem Gender und gleichem `hill` innerhalb von 5
+Kalendertagen ab dem ersten Wettkampf erhalten dieselbe Nummer.
+
+Excel selbst schreibt das Sheet (über `pywin32`, in einer eigenen,
+unsichtbaren Excel-Instanz, ohne die Makros auszuführen). Dadurch bleiben
+Makros, Schaltflächen, Tabellen und Formeln der anderen Sheets erhalten; die
+Datei wird einmal gespeichert. Ist `SJ-Listen.xlsm` in Excel geöffnet, bricht
+der Crawler mit einer Meldung ab: Datei schliessen und erneut starten. Findet
+der Crawler keine Wettkämpfe, bleibt `Event_ID` unverändert.
 
 ## Ausführen
 
@@ -33,7 +52,7 @@ Alternativ lässt sich der Crawler direkt mit Python starten:
 ```powershell
 python -m pip install -r requirements.txt
 python fis_raceid_crawler.py
-python fis_raceid_crawler.py --season 2027 --output ..\data\raceid\raceid.xlsx
+python fis_raceid_crawler.py --season 2027 --output ..\data\SJ-Listen.xlsm
 ```
 
 Die Abfragen werden nacheinander mit einer Pause ausgeführt. Bei einer

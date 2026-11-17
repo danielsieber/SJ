@@ -2,12 +2,9 @@ import argparse
 import re
 import sys
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sj_paths import DATA_DIRECTORY  # noqa: E402
@@ -26,7 +23,8 @@ from fis_web import (  # noqa: E402
 
 DEFAULT_SEASON = current_season()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUTPUT_PATH = DATA_DIRECTORY / "raceid" / "raceid.xlsx"
+DEFAULT_OUTPUT_PATH = DATA_DIRECTORY / "SJ-Listen.xlsm"
+SHEET_NAME = "Event_ID"
 HEADERS = (
     "season",
     "date",
@@ -34,9 +32,27 @@ HEADERS = (
     "raceid",
     "codex",
     "place",
+    "hill",
     "category",
     "gender",
+    "EventNr",
 )
+TEXT_COLUMNS = ("eventid", "raceid", "codex")  # keep leading zeros (codex 0284)
+EXCEL_EPOCH = date(1899, 12, 30)
+HEADER_FONT_COLOR = 0xFFFFFF  # Excel colours are BGR: white
+HEADER_FILL_COLOR = 0x8A3517  # RGB 17358A (dark blue) as BGR
+MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3  # do not run the workbook's macros
+# Competitions of one event lie within 5 calendar days (e.g. Friday to Tuesday).
+EVENT_SPAN = timedelta(days=4)
+# FIS describes each competition as e.g. "Individual Large Hill Qualification".
+HILL_TYPES = {
+    "Small": "SH",
+    "Medium": "MH",
+    "Normal": "NH",
+    "Large": "LH",
+    "Flying": "FH",
+}
+HILL_PATTERN = re.compile(r"\b(" + "|".join(HILL_TYPES) + r") Hill\b")
 
 
 def _warn(message: str) -> None:
@@ -118,6 +134,9 @@ def _competition_rows(
             )
             continue
 
+        hill_match = HILL_PATTERN.search(row.text)
+        hill = HILL_TYPES[hill_match.group(1)] if hill_match else None
+
         for gender in dict.fromkeys(genders):
             competitions.append(
                 {
@@ -129,6 +148,7 @@ def _competition_rows(
                     "place": place,
                     "category": categories[0],
                     "gender": gender,
+                    "hill": hill,
                 }
             )
     return competitions
@@ -146,46 +166,138 @@ def crawl_season(season: int) -> list[dict]:
     return records
 
 
-def write_workbook(records: list[dict], output_path: Path) -> None:
-    workbook = Workbook()
-    workbook.remove(workbook.active)
-    for sheet_name, gender_filter in (
-        ("men", "M"),
-        ("women", "W"),
-        ("mixed", "A"),
-        ("all", None),
-    ):
-        sheet = workbook.create_sheet(sheet_name)
-        sheet.append(HEADERS)
-        for cell in sheet[1]:
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill("solid", fgColor="17358A")
+def _sorted(records: list[dict]) -> list[dict]:
+    return sorted(
+        records,
+        key=lambda record: (record["season"], record["date"], int(record["codex"])),
+    )
 
-        sheet_records = sorted(
-            (
-                record
-                for record in records
-                if gender_filter is None or record["gender"] == gender_filter
-            ),
-            key=lambda record: (
-                record["season"],
-                record["date"],
-                int(record["codex"]),
-            ),
+
+def event_numbers(records: list[dict]) -> list[int]:
+    """Consecutive event number for each record of ``_sorted(records)``.
+
+    One event (e.g. World Cup men in Klingenthal on Saturday and Sunday) has
+    the same season, place, category, gender and hill type (NH/LH/FH) and all
+    its competitions lie within 5 calendar days of the first one.
+    """
+    numbers = []
+    last_number = 0
+    open_events = {}  # key -> (number, date of the first competition)
+    for record in records:
+        key = (
+            record["season"],
+            record["place"],
+            record["category"],
+            record["gender"],
+            record.get("hill"),
         )
-        for record in sheet_records:
-            sheet.append([record[header] for header in HEADERS])
+        current = open_events.get(key)
+        if current is None or record["date"] - current[1] > EVENT_SPAN:
+            last_number += 1
+            current = (last_number, record["date"])
+            open_events[key] = current
+        numbers.append(current[0])
+    return numbers
 
-        for cell in sheet["B"][1:]:
-            cell.number_format = "yyyy-mm-dd"
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
-        for column_cells in sheet.columns:
-            width = max(len(str(cell.value or "")) for cell in column_cells) + 2
-            sheet.column_dimensions[column_cells[0].column_letter].width = width
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(output_path)
+def sheet_rows(records: list[dict]) -> list[list]:
+    """Header and records sorted by season, date and codex, as Excel values.
+
+    Dates become Excel serial numbers (shown as yyyy-mm-dd), so no time zone
+    conversion can shift them.
+    """
+    rows = [list(HEADERS)]
+    records = _sorted(records)
+    for record, number in zip(records, event_numbers(records)):
+        values = dict(record)
+        values["date"] = (record["date"] - EXCEL_EPOCH).days
+        values["EventNr"] = number
+        rows.append([values[header] for header in HEADERS])
+    return rows
+
+
+def _local_date_format(excel) -> str:
+    """'yyyy-mm-dd' with the date letters of the Excel language (German: JJJJ-MM-TT)."""
+    # Application.International: xlYearCode 19, xlMonthCode 20, xlDayCode 21
+    # (late-bound COM returns the whole 1-based array).
+    international = excel.International
+    year, month, day = international[18], international[19], international[20]
+    return f"{year * 4}-{month * 2}-{day * 2}"
+
+
+class WorkbookOpenError(RuntimeError):
+    """Raised when the workbook is open in Excel and cannot be written."""
+
+
+def _excel_application():
+    import win32com.client
+
+    # A separate Excel instance: a workbook the user has open stays untouched.
+    return win32com.client.DispatchEx("Excel.Application")
+
+
+def check_writable(workbook_path: Path) -> None:
+    """Fail before crawling when the workbook is missing or open in Excel."""
+    if not workbook_path.is_file():
+        raise FileNotFoundError(f"Excel-Datei nicht gefunden: {workbook_path}")
+    lock_file = workbook_path.with_name(f"~${workbook_path.name}")
+    if lock_file.exists():
+        raise WorkbookOpenError(
+            f"{workbook_path.name} ist in Excel geöffnet. Bitte schliessen und neu starten."
+        )
+
+
+def write_event_sheet(records: list[dict], workbook_path: Path, excel_factory=None) -> None:
+    """Replace the content of the sheet Event_ID in SJ-Listen.xlsm.
+
+    Excel itself writes the workbook, so macros, buttons, tables and formulas
+    of the other sheets are kept. Only the sheet Event_ID is changed and the
+    file is saved once.
+    """
+    if not records:
+        raise ValueError(f"Keine Wettkämpfe gefunden; {SHEET_NAME} bleibt unverändert.")
+    check_writable(workbook_path)
+
+    rows = sheet_rows(records)
+    excel = (excel_factory or _excel_application)()
+    workbook = None
+    try:
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        excel.AutomationSecurity = MSO_AUTOMATION_SECURITY_FORCE_DISABLE
+        workbook = excel.Workbooks.Open(str(workbook_path.resolve()), 0, False)
+        if workbook.ReadOnly:
+            raise WorkbookOpenError(
+                f"{workbook_path.name} ist schreibgeschützt oder in Excel geöffnet. "
+                "Bitte schliessen und neu starten."
+            )
+        if SHEET_NAME not in [sheet.Name for sheet in workbook.Worksheets]:
+            raise ValueError(f"Sheet {SHEET_NAME} fehlt in {workbook_path.name}.")
+        sheet = workbook.Worksheets(SHEET_NAME)
+        if sheet.AutoFilterMode:
+            sheet.AutoFilterMode = False
+        sheet.UsedRange.Clear()
+
+        data = sheet.Range(sheet.Cells(1, 1), sheet.Cells(len(rows), len(HEADERS)))
+        for index, header in enumerate(HEADERS, start=1):
+            column = sheet.Range(sheet.Cells(2, index), sheet.Cells(len(rows), index))
+            if header in TEXT_COLUMNS:
+                column.NumberFormat = "@"
+            elif header == "date":
+                column.NumberFormatLocal = _local_date_format(excel)
+        data.Value = tuple(tuple(row) for row in rows)
+
+        header = sheet.Range(sheet.Cells(1, 1), sheet.Cells(1, len(HEADERS)))
+        header.Font.Bold = True
+        header.Font.Color = HEADER_FONT_COLOR
+        header.Interior.Color = HEADER_FILL_COLOR
+        data.AutoFilter()
+        data.Columns.AutoFit()
+        workbook.Save()
+    finally:
+        if workbook is not None:
+            workbook.Close(False)
+        excel.Quit()
 
 
 def main() -> None:
@@ -202,14 +314,19 @@ def main() -> None:
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT_PATH,
-        help="Excel-Ausgabedatei (Standard: raceid/raceid.xlsx im SJpdf-Datenordner)",
+        help="Excel-Datei mit dem Sheet Event_ID (Standard: SJ-Listen.xlsm im SJpdf-Datenordner)",
     )
     args = parser.parse_args()
 
     print(f"FIS Ski Jumping ({SECTOR_CODE}), Saison {args.season}")
-    records = crawl_season(args.season)
-    write_workbook(records, args.output)
-    print(f"{len(records)} Wettkämpfe in {args.output} gespeichert.")
+    try:
+        check_writable(args.output)
+        records = crawl_season(args.season)
+        write_event_sheet(records, args.output)
+    except (WorkbookOpenError, FileNotFoundError, ValueError) as error:
+        print(f"Fehler: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+    print(f"{len(records)} Wettkämpfe in {args.output} (Sheet {SHEET_NAME}) gespeichert.")
 
 
 if __name__ == "__main__":

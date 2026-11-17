@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import warnings
 from dataclasses import dataclass
 from datetime import date, datetime
 from email.message import Message
@@ -31,7 +32,9 @@ from fis_web import (  # noqa: E402
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RACEID_FILE = DATA_DIRECTORY / "raceid" / "raceid.xlsx"
+# Sheet Event_ID is written by raceid_crawler/fis_raceid_crawler.py.
+RACEID_FILE = DATA_DIRECTORY / "SJ-Listen.xlsm"
+EVENT_SHEET = "Event_ID"
 PDF_DIRECTORY = DATA_DIRECTORY / "pdf"
 # Original FIS link of every downloaded PDF (read by pdf_to_xlsx).
 LINKS_FILENAME = "pdf_links.csv"
@@ -91,16 +94,31 @@ def _cell_text(value) -> str:
     return str(value).strip()
 
 
+def _load_event_workbook(workbook_path: Path):
+    with warnings.catch_warnings():
+        # openpyxl warns about the print area of other sheets in SJ-Listen.xlsm.
+        warnings.simplefilter("ignore", UserWarning)
+        return load_workbook(workbook_path, read_only=True, data_only=True)
+
+
+def _event_sheet_names(workbook) -> list[str]:
+    """Event_ID (SJ-Listen.xlsm), else 'all' or men/women/mixed (old raceid.xlsx)."""
+    for name in (EVENT_SHEET, "all"):
+        if name in workbook.sheetnames:
+            return [name]
+    names = [name for name in ("men", "women", "mixed") if name in workbook.sheetnames]
+    if not names:
+        raise ValueError(f"Sheet {EVENT_SHEET} fehlt in {workbook.path or 'der Excel-Datei'}.")
+    return names
+
+
 def read_workbook_candidates(workbook_path: Path, codex: str) -> list[Candidate]:
     if not workbook_path.is_file():
-        raise FileNotFoundError(f"Race-ID-Datei nicht gefunden: {workbook_path}")
+        raise FileNotFoundError(f"Excel-Datei mit dem Sheet Event_ID nicht gefunden: {workbook_path}")
 
-    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+    workbook = _load_event_workbook(workbook_path)
     try:
-        sheet_name = "all" if "all" in workbook.sheetnames else None
-        sheet_names = [sheet_name] if sheet_name else [
-            name for name in ("men", "women", "mixed") if name in workbook.sheetnames
-        ]
+        sheet_names = _event_sheet_names(workbook)
         candidates = {}
         for name in sheet_names:
             rows = workbook[name].iter_rows(values_only=True)
@@ -286,10 +304,10 @@ def find_candidates(
     if candidates:
         return candidates
 
-    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+    workbook = _load_event_workbook(workbook_path)
     try:
         seasons = set()
-        for sheet_name in workbook.sheetnames:
+        for sheet_name in _event_sheet_names(workbook):
             rows = workbook[sheet_name].iter_rows(values_only=True)
             headers = next(rows, None)
             if headers is None or "season" not in headers:
@@ -418,7 +436,7 @@ def folder_name_for_group(
         )
     if not candidate.place:
         raise ValueError(
-            f"Veranstaltungsort für Event {candidate.eventid} fehlt in der Race-ID-Tabelle."
+            f"Veranstaltungsort für Event {candidate.eventid} fehlt im Sheet Event_ID."
         )
 
     category = categories.pop()
