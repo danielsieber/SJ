@@ -27,7 +27,7 @@ mit Filter über den ganzen Bereich.
 Kalenders; sie steht erst in den Ergebnis-PDFs.
 
 `cat1` ist die FIS-Kategorie (z. B. `WC`, `GP`, `COC`, `QUA`). `cat2` ist gleich
-wie `cat1`, nur `FIS` (FIS Cup) wird zu `FC`, und eine Qualifikation (`QUA`) erhält die Kategorie der
+wie `cat1`, nur `FIS` (FIS Cup) wird zu `FC`, `FESA` (Alpen Cup) zu `AC`, und eine Qualifikation (`QUA`) erhält die Kategorie der
 Meisterschaft, zu der sie gehört (`OWG`, `WSC`, `SFWC` oder `WJC` am selben Ort,
 mit gleichem Gender und `hill`, innerhalb von 5 Kalendertagen), sonst `GP` (Mai
 bis Oktober) bzw. `WC` (übrige Monate).

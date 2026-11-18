@@ -49,8 +49,9 @@ MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3  # do not run the workbook's macros
 # (May to October) Grand Prix, else World Cup.
 SUMMER_MONTHS = range(5, 11)
 CHAMPIONSHIP_CATEGORIES = ("OWG", "WSC", "SFWC", "WJC")
-# cat2 of other categories that differ from cat1 (FIS Cup is FC).
-CATEGORY_2 = {"FIS": "FC"}
+# cat2 of other categories that differ from cat1 (FIS Cup is FC, FESA is
+# the Alpen Cup AC).
+CATEGORY_2 = {"FIS": "FC", "FESA": "AC"}
 # Competitions of one event lie within 5 calendar days (e.g. Friday to Tuesday).
 EVENT_SPAN = timedelta(days=4)
 # FIS describes each competition as e.g. "Individual Large Hill Qualification".
@@ -225,7 +226,7 @@ def event_numbers(records: list[dict]) -> list[int]:
 
 
 def second_category(category: str, competition_date: date, championship: str | None = None) -> str:
-    """cat2: the category, but FIS becomes FC and QUA becomes the championship
+    """cat2: the category, but FIS becomes FC, FESA becomes AC and QUA becomes the championship
     (e.g. WSC) it belongs to, else GP (May to October) or WC."""
     if category != "QUA":
         return CATEGORY_2.get(category, category)

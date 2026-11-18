@@ -151,6 +151,7 @@ class FisCrawlerTests(unittest.TestCase):
         self.assertEqual(second_category("QUA", date(2027, 4, 30)), "WC")
         self.assertEqual(second_category("COC", date(2026, 8, 1)), "COC")
         self.assertEqual(second_category("FIS", date(2026, 8, 1)), "FC")
+        self.assertEqual(second_category("FESA", date(2026, 8, 1)), "AC")
         rows = sheet_rows([record("0275", date(2026, 10, 24), "W", "QUA")])
         self.assertEqual(rows[1][7:9], ["QUA", "GP"])
 
