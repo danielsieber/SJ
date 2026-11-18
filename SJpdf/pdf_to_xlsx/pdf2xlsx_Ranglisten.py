@@ -31,18 +31,22 @@ from openpyxl.workbook import Workbook
 if __package__:
     from .pdf2xlsx_Resultate import (
         HEADER_FILL,
+        MAX_ROUNDS,
         NUMBER_FORMATS,
         RESULT_COLUMNS,
         ROUND_FIELDS,
         STATUS_CODES,
+        TEAM_KEY,
     )
 else:
     from pdf2xlsx_Resultate import (
         HEADER_FILL,
+        MAX_ROUNDS,
         NUMBER_FORMATS,
         RESULT_COLUMNS,
         ROUND_FIELDS,
         STATUS_CODES,
+        TEAM_KEY,
     )
 
 
@@ -56,7 +60,7 @@ EMPTY_FILL = PatternFill(fill_type="solid", fgColor="FFFFC7CE")  # light red
 DATE_FORMAT = "yyyy-mm-dd"
 TIME_FORMAT = "hh:mm:ss"
 ROUND_TYPES = {"RLT": "T", "RLQ": "Q", "RTRIA": "P", "RL": "W"}
-KIND_PATTERN = re.compile(r"(RLT|RLQ|RTRIA|RL)$", re.I)
+KIND_PATTERN = re.compile(r"(RLT|RLQ|RTRIA|RL)\d?$", re.I)  # RLT1-RLT3: one training round each
 FIRST_ROUND_REMARK = re.compile(r"\b1st round\b", re.I)
 NOT_QUALIFIED = "Not Qualified"
 
@@ -97,7 +101,13 @@ def _bib_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     missing = [row.get("Name") for row in rows if row.get("Bib") is None]
     if missing:
         raise RanglistenError(f"athletes without bib: {missing}")
-    return sorted(rows, key=lambda row: row["Bib"])
+
+    def key(row: dict[str, Any]) -> tuple:
+        member = _team_member(row["Bib"])
+        # Team events ('8-2'): group by group, the teams in bib order.
+        return (member[1], member[0]) if member else (0, row["Bib"])
+
+    return sorted(rows, key=key)
 
 
 def _round_status(row: dict[str, Any], number: int) -> str | None:
@@ -235,6 +245,81 @@ def _competition_rounds(
     rounds = [(pdf.first_round_stem or pdf.stem, first)]
     if second:
         rounds.append((pdf.stem, second))
+    rounds.extend(_later_rounds(pdf, rl_rows, warnings))
+    return rounds
+
+
+def _later_rounds(
+    pdf: PdfResults, rows: list[dict[str, Any]], warnings: list[str]
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Rounds 3 and 4 (ski flying championships): in reverse order of the
+    standings after the round before (estimated, there is no start list)."""
+    rounds = []
+    for number in range(3, MAX_ROUNDS + 1):
+        starters = [row for row in rows if row.get(f"Distance {number}") is not None]
+        if not starters:
+            break
+
+        def points_before(row: dict[str, Any], number: int = number) -> float:
+            return sum(row.get(f"Round Total {n}") or 0.0 for n in range(1, number))
+
+        warnings.append(
+            f"{pdf.stem}: round {number} in the reverse order of the standings after "
+            f"round {number - 1} (no start list)."
+        )
+        rounds.append((pdf.stem, [_round_row(row, number) for row in sorted(starters, key=points_before)]))
+    return rounds
+
+
+def _team_member(bib: Any) -> tuple[int, int] | None:
+    """'8-2' -> (8, 2): team bib and position of the jumper in the team."""
+    match = re.fullmatch(r"(\d+)-(\d)", str(bib))
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def _team_rounds(
+    pdf: PdfResults, warnings: list[str]
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Team events: per round the jumpers (not the team rows) in start order.
+
+    Start order: start list SLR1 (round 1) and SLRF (last round); else group
+    by group (first jumpers of all teams, then the second, ...), the teams in
+    bib order in round 1 and in reverse order of the team standings later.
+    """
+    teams = {row["Bib"]: row for row in pdf.rows if row.get(TEAM_KEY)}
+    jumpers = [row for row in pdf.rows if _team_member(row.get("Bib")) is not None]
+    last_round = max(
+        (number for number in range(1, MAX_ROUNDS + 1)
+         if any(row.get(f"Distance {number}") is not None for row in jumpers)),
+        default=0,
+    )
+    rounds = []
+    for number in range(1, last_round + 1):
+        starters = [
+            row for row in jumpers
+            if row.get(f"Distance {number}") is not None or (number == 1 and row.get("Status"))
+        ]
+        start_list = pdf.start_order_1 if number == 1 else (
+            pdf.start_order_2 if number == last_round else None
+        )
+        position = {bib: index for index, bib in enumerate(start_list or [])}
+        if start_list is None or any(row["Bib"] not in position for row in starters):
+            warnings.append(
+                f"{pdf.stem}: round {number} of the team event in group and team order "
+                "(no start list for this round)."
+            )
+
+            def team_points(team_bib: int, number: int = number) -> float:
+                team = teams.get(team_bib, {})
+                return sum(team.get(f"Round Total {n}") or 0.0 for n in range(1, number))
+
+            def order(row: dict[str, Any], number: int = number) -> tuple:
+                team_bib, member = _team_member(row["Bib"])
+                return (member, team_points(team_bib) if number > 1 else 0.0, team_bib)
+        else:
+            def order(row: dict[str, Any], position: dict = position) -> tuple:
+                return (position[row["Bib"]],)
+        rounds.append((pdf.stem, [_round_row(row, number) for row in sorted(starters, key=order)]))
     return rounds
 
 
@@ -297,9 +382,12 @@ def build_ranglisten(
     jump_number = 0
     for pdf in pdfs:
         kind = pdf_kind(pdf.stem)
-        rounds = (
-            _competition_rounds(pdf, warnings) if kind == "RL" else _simple_rounds(pdf)
-        )
+        if any(row.get(TEAM_KEY) for row in pdf.rows):
+            rounds = _team_rounds(pdf, warnings)
+        elif kind == "RL":
+            rounds = _competition_rounds(pdf, warnings)
+        else:
+            rounds = _simple_rounds(pdf)
         for round_number, (source, round_rows) in enumerate(rounds, start=1):
             jump_number += 1
             for values in round_rows:

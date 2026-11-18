@@ -11,9 +11,17 @@ und öffnet am Schluss `Fehlende_JumperID.xlsx`) oder:
 python fis_season_check.py --season 2026
 ```
 
-`--season 2026` ist die Saison 2025/26. Mit `--output` und `--listen` lassen
+`--season 2026` ist die Saison 2025/26. Mehrere Saisons in einer Tabelle:
+`--season 2024-2026` (oder `--season 2024 2025 2026`); die Datei heisst dann
+`Fehlende_JumperID 2024-2026.xlsx`. Mit `--output` und `--listen` lassen
 sich andere Dateien angeben. `Event_ID` in `SJ-Listen.xlsm` wird nicht
 verändert; das Skript liest die Saison nur.
+
+PDFs, die schon im PDF-Archiv `C:\downloaded_FIS_pdf` liegen (siehe
+`pdf_archive`, `--archive`), werden von dort gelesen und nicht neu geladen.
+
+Wettkämpfe auf Schanzen bis HS30 werden nicht berücksichtigt (weder ihre
+Springer noch die Schanze).
 
 ## Woher die Daten kommen
 

@@ -85,6 +85,22 @@ class RuleTests(unittest.TestCase):
             (None, "JumperID 'SUI MUSTER HANS' fehlt in Liste_Springer_ID"),
         )
 
+    def test_double_first_name_and_initials(self):
+        listen = SjListen(jumpers=[
+            Jumper("FRA CHERVE JULES", "CHERVET Jules", "FRA", 1),
+            Jumper("GER SCHARF ANNA-F", "SCHARFENBERG Anna-Fay", "GER", 2),
+            Jumper("NOR SUNDAL KRISTO", "SUNDAL Kristoffer Eriksen", "NOR", 3),
+            Jumper("NOR SUNDAL NICOLA", "SUNDAL Nicolai Eriksen", "NOR", 4),
+        ])
+        # 'Jules-Lucien' in the PDF, 'Jules' in the list: the same jumper
+        self.assertEqual(listen.resolve("CHERVET Jules-Lucien", "FRA"), ("FRA CHERVE JULES", None))
+        # the rule ID keeps the hyphen when it is listed so
+        self.assertEqual(listen.resolve("SCHARFENBERG Anna-Fay", "GER"), ("GER SCHARF ANNA-F", None))
+        # Olympic lists: initials of the first names
+        self.assertEqual(listen.resolve("SCHARFENBERG AF", "GER"), ("GER SCHARF ANNA-F", None))
+        self.assertEqual(listen.resolve("SUNDAL KE", "NOR"), ("NOR SUNDAL KRISTO", None))
+        self.assertIsNone(listen.resolve("SUNDAL E", "NOR")[0])
+
     def test_hill_name(self):
         self.assertEqual(hill_name("Einsiedeln (SUI)", 117), "Einsiedeln HS117")
         self.assertEqual(hill_name("Einsiedeln (SUI)", 117.0), "Einsiedeln HS117")

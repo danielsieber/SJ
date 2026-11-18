@@ -4,14 +4,18 @@ cd /d "%~dp0"
 set "PYTHON=python"
 where py >nul 2>nul && set "PYTHON=py"
 
-rem Season as argument (start_season_check.bat 2026) or asked here.
+rem Season as argument (start_season_check.bat 2026 or 2024-2026) or asked here.
 set "SEASON=%~1"
-if "%SEASON%"=="" set /p "SEASON=FIS-Saison (z. B. 2026 fuer 2025/26): "
+if "%SEASON%"=="" set /p "SEASON=FIS-Saison (z. B. 2026 fuer 2025/26, mehrere: 2024-2026): "
 if "%SEASON%"=="" (
     echo Keine Saison angegeben.
     pause
     exit /b 1
 )
+
+rem Several seasons (2024-2026): own file name with the seasons.
+set "OUTNAME=Fehlende_JumperID.xlsx"
+if not "%SEASON:-=%"=="%SEASON%" set "OUTNAME=Fehlende_JumperID %SEASON%.xlsx"
 
 %PYTHON% fis_season_check.py --season %SEASON%
 set "exit_code=%ERRORLEVEL%"
@@ -29,5 +33,5 @@ if not "%SJPDF_SYNC_WAIT%"=="0" (
     echo Waiting %SJPDF_SYNC_WAIT% seconds for Nextcloud to upload the workbook ...
     timeout /t %SJPDF_SYNC_WAIT% /nobreak >nul
 )
-start "" "%DATA_DIR%\Fehlende_JumperID.xlsx"
+start "" "%DATA_DIR%\%OUTNAME%"
 exit /b %exit_code%

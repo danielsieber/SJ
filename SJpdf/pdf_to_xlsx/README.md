@@ -5,8 +5,42 @@ SJpdf data folder (see the main `SJpdf/README.md`). Subfolders, including
 archived event folders, are not searched. It creates `latest event.xlsx` in the
 same data folder.
 Only files named like
-`2027JP0372RL`, `2027JP0372RLT`, `2027JP0372RLQ`, or `2027JP0372RTRIA`
+`2027JP0372RL`, `2027JP0372RLT` (also `RLT1`, `RLT2`, ... for several
+official trainings), `2027JP0372RLQ`, or `2027JP0372RTRIA`
 (with a `.pdf` extension) are processed. Other PDF types are ignored.
+
+Supported layouts: Swiss Timing (World Cup, Grand Prix, COC, also the
+older layout of 2023-2025 without bold print), EWOXX and the layouts of
+local organisers with mixed-case headers (`Rank`, `Bib`, `NOC Code`), tables
+without row lines, two tables side by side or one below the other, and
+team events (team rows `GER - Germany` with their jumpers `8-1`, `8-2`, ...;
+the jumpers get the nation of their team, `(W)`/`(M)` of mixed teams is
+removed). PDFs without a `FIS ...` title (Alpen Cup, FESA games) are read
+with their first title line.
+
+- KO competitions (Four Hills): the qualification `RLQ` with its total column
+  `Points`; in `RL`/`RL1` the pair winners and lucky losers (`*`, remark
+  `Lucky Loser`) are ranked apart from the other losers (`Not Qualified`).
+  The Four Hills standings (`...4H.pdf`) are not read.
+- Olympic Games / Youth Olympic Games: header labels at slightly different
+  heights, names without bold print (`DESCHWANDEN` / `Gregor` on two lines,
+  initials such as `SUNDAL KE`).
+- WinSpringen lists of DSV organisers (Alpen Cup, FESA, OPA in Germany,
+  printed with "Microsoft Print to PDF"): German columns (`Rang`, `StNr`,
+  `Weite`, `W-N.`, `H-N.`, `Luke`, `G-N.`, `T-N.`), two lines per athlete
+  (round 1 with name, round 2 with club and nation), training lists with
+  speed/distance ranks (equal values share a rank without gap), age groups
+  (`Boys, 64.0 m Schanze`) ranked apart, DNS/DSQ lists, empty distance or
+  wind points counted as 0. Date from `15.03.2026`, `26th October 2024` or
+  the print date `Erstellt am`. Team lists of WinSpringen are not supported.
+- A round never counts below 0 points (negative sum printed as `0.0`).
+- Team events of Olympic Games, Youth Olympic Games and Junior World
+  Championships: round lines above and below the name, name above the bib.
+  A team start list without start order for the later groups only gives a
+  warning; the rounds are then ordered by the team standings.
+- JumperID: a double first name in the PDF (`CHERVET Jules-Lucien`) finds the
+  listed `FRA CHERVE JULES`; initials of Olympic lists (`SUNDAL KE`) find the
+  only listed jumper of the nation with this surname and these initials.
 
 The workbook contains the sheet `Daten`. Each supported PDF has its own column.
 The first column contains general competition data, competition/weather
@@ -68,6 +102,13 @@ AH `PDF` (source PDF of the row).
 - Status: `DSQ`, `DNS`, `NPS` for the round concerned; `Not Qualified` when
   the athlete may not start in the next round.
 - If RL1 is missing, the first round is taken from RL and a warning is shown.
+- Rounds 3 and 4 (ski flying championships): reverse order of the standings
+  after the round before, with a warning (there is no start list).
+- Team events: the jumpers (not the team rows), round by round in the order
+  of the start lists; without a start list group by group (first jumpers of
+  all teams, then the second, ...), the teams in bib order in round 1 and in
+  the reverse order of the team standings later (warning). Each team total
+  is checked against the points of its jumpers.
 - `Date` is the date of the round's PDF. `Time`: the first jumper of a round
   gets the start time, the last one the end time of the round (`Start Time n`,
   `End Time n` of DG n in `Daten`; RL1 holds round 1, RL round 2), the jumpers

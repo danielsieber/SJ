@@ -145,9 +145,43 @@ class ExtractDataTests(unittest.TestCase):
         self.assertIsNone(values["Hill Size"])
         self.assertIsNone(values["Gender"])
 
-    def test_missing_title_is_reported(self):
+    def test_pdf_without_text_is_reported(self):
         with self.assertRaises(PdfParseError):
-            extract_data_from_text("No result data")
+            extract_data_from_text("  \n ")
+
+    def test_hill_data_of_local_organisers(self):
+        values = extract_data_from_text(
+            "ZAKOPANE JUMPING HILLS\nFIS CUP\nHill Size (95%)\n105m (99.5m)\nK-Point\n95m\n"
+            "Metre value\n2.0 points per m\n"
+        )
+        self.assertEqual(
+            (values["Hill Size"], values["HS 95%"], values["K-Punkt"], values["Meter Value"]),
+            (105, 99.5, 95, 2),
+        )
+
+    def test_dates_of_local_organisers(self):
+        for text, expected in (
+            ("FESA ALPEN CUP SKI JUMPING MEN\nHinterzarten (GER)\n15.03.2026\n", date(2026, 3, 15)),
+            ("FESA SJ GAMES Youth II\nOberwiesenthal\n26th October 2024\n", date(2024, 10, 26)),
+            ("OPA Alpencup Spezialsprunglauf Herren\n23.Januar 2021\n", date(2021, 1, 23)),
+            ("O F F I C I A L R E S U L T S\nErstellt am: 20.09.25 12:25\n", date(2025, 9, 20)),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(extract_data_from_text(text)["Datum"], expected)
+
+    def test_place_of_local_organisers(self):
+        values = extract_data_from_text(
+            "FESA ALPEN CUP SKI JUMPING MEN\n 15th Alpen Cup Competition\nHinterzarten (GER)\n"
+            "NORMAL HILL INDIVIDUAL\n15.03.2026\nTD:\nHIRSCH Volkmar (GER)\n"
+        )
+        self.assertEqual((values["Place"], values["Hill"]), ("Hinterzarten (GER)", "NORMAL HILL INDIVIDUAL"))
+
+    def test_title_without_fis(self):
+        values = extract_data_from_text(
+            "FESA ALPEN CUP SKI JUMPING WOMEN\n11th Alpen Cup Competition\nSAT 17 FEB 2024\n"
+        )
+        self.assertEqual(values["Titel"], "FESA ALPEN CUP SKI JUMPING WOMEN")
+        self.assertEqual(values["Gender"], "WOMEN")
 
     def test_extracts_information_and_footer(self):
         values = extract_data_from_text(SAMPLE_TEXT + INFORMATION_TEXT)

@@ -94,6 +94,25 @@ class ParserTests(unittest.TestCase):
         self.assertEqual((hill["SchanzenID"], hill["K-Punkt"]), ("Klingenthal HS66", 60))
 
 
+class SeasonsAndArchiveTests(unittest.TestCase):
+    def test_several_seasons(self):
+        self.assertEqual(season.parse_seasons(["2024-2026"]), [2024, 2025, 2026])
+        self.assertEqual(season.parse_seasons(["2026", "2024"]), [2024, 2026])
+        self.assertEqual(season.season_label([2024, 2025, 2026]), "2024-2026")
+        self.assertEqual(season.season_label([2026]), "2026")
+
+    def test_pdfs_of_the_archive_are_read_locally(self):
+        with tempfile.TemporaryDirectory() as folder:
+            event = Path(folder) / "2026-03-14 COCM Zakopane LH"
+            event.mkdir()
+            (event / "2026JP0471RL.pdf").write_bytes(b"%PDF local")
+            (event / "pdf_links.csv").write_text("pdf,url\n2026JP0471RL.pdf,https://x/0471\n", encoding="utf-8")
+            links = season.archive_links(Path(folder))
+            self.assertEqual(links, {"https://x/0471": event / "2026JP0471RL.pdf"})
+            fetcher = season.Fetcher(cache_directory=Path(folder) / "cache", local_files=links)
+            self.assertEqual(fetcher.get("https://x/0471"), b"%PDF local")
+
+
 class CompareTests(unittest.TestCase):
     def setUp(self):
         self.listen = SjListen(

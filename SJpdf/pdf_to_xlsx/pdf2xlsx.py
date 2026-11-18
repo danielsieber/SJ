@@ -32,6 +32,7 @@ if __package__:
         write_ranglisten_sheet,
     )
     from .pdf2xlsx_Resultate import (
+        TEAM_KEY,
         ResultsParseError,
         extract_results,
         write_error_sheet,
@@ -59,6 +60,7 @@ else:
         write_ranglisten_sheet,
     )
     from pdf2xlsx_Resultate import (
+        TEAM_KEY,
         ResultsParseError,
         extract_results,
         write_error_sheet,
@@ -76,7 +78,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PDF_DIRECTORY = DATA_DIRECTORY / "pdf"
 OUTPUT_FILE = DATA_DIRECTORY / "latest event.xlsx"
 PDF_NAME_PATTERN = re.compile(
-    r"^\d{4}JP\d{4}(?:RLT|RLQ|RTRIA|RL)\.pdf$",
+    # RLT1, RLT2, ...: several official trainings; RL1 is read with its RL.
+    r"^\d{4}JP\d{4}(?:RLT\d?|RLQ|RTRIA|RL)\.pdf$",
     re.IGNORECASE,
 )
 UNAVAILABLE_FIELD_FILL = PatternFill(
@@ -230,6 +233,10 @@ def _add_result_sheets(
                 pdf_results = None
         start_order_2, ok_2 = _read_start_order(final_list, workbook, warnings)
         rows = _read_results(pdf_path, workbook, warnings)
+        if rows is not None and any(row.get(TEAM_KEY) for row in rows):
+            # Team events: the later groups of a start list have no start order
+            # yet; without it the rounds are ordered by the team standings.
+            ok_1 = ok_2 = True
         if rows is None or not (ok_1 and ok_2):
             pdf_results = None
         if pdf_results is not None:
@@ -244,8 +251,8 @@ def _add_result_sheets(
 
 def _read_listen(listen_file: Path | None, notes: list[Note]) -> SjListen | None:
     """SJ-Listen.xlsm or None (with a warning) when it cannot be read."""
-    if listen_file is None:
-        return None
+    if listen_file is None or isinstance(listen_file, SjListen):
+        return listen_file
     try:
         return read_sj_listen(listen_file)
     except ListenError as error:
@@ -397,7 +404,12 @@ _DEFAULT = object()
 
 
 def create_workbook(
-    pdf_paths: Sequence[Path], output_file: Path, listen_file=_DEFAULT
+    pdf_paths: Sequence[Path],
+    output_file: Path,
+    listen_file=_DEFAULT,
+    competition: str | None = None,
+    save_copy: bool = True,
+    place: str | None = None,
 ) -> list[str]:
     """Extract each PDF once and save the selected fields in separate columns.
 
@@ -414,7 +426,13 @@ def create_workbook(
     workbook is saved so no outdated results remain.
 
     Jumpers (JumperID in Ranglisten) and hills (Pts / Gate DGW in Daten) are
-    looked up in listen_file (default SJ-Listen.xlsm; None: no lookup).
+    looked up in listen_file (default SJ-Listen.xlsm; None: no lookup; an
+    SjListen already read is used as it is).
+
+    competition replaces the name read from the PDFs (first part of JumpID,
+    e.g. from the PDF archive folder); save_copy=False saves output_file only.
+    place (FIS calendar) replaces a Place of a PDF without country code
+    ('Engelberg (SUI)'), as printed by local organisers.
     """
     if listen_file is _DEFAULT:
         listen_file = SJ_LISTEN_FILE
@@ -442,6 +460,10 @@ def create_workbook(
                     with_first_rounds.append((first_round_path, extract_data(first_round_path)))
                 with_first_rounds.append((pdf_path, values))
             extracted = with_first_rounds
+            if place:
+                for _path, values in extracted:
+                    if not re.search(r"\([A-Z]{3}\)", str(values.get("Place") or "")):
+                        values["Place"] = place
         except PdfParseError as error:
             pdfs = [(path, None) for path in pdf_paths]
             write_notes_sheet(workbook, created, pdfs, [Note("Fehler", str(error))])
@@ -511,11 +533,14 @@ def create_workbook(
             for cell in worksheet[row]:
                 cell.fill = SECTION_FILL
 
-        try:
-            name = competition_file_name([values for _path, values in extracted])
-        except RanglistenError as error:
-            name = None
-            warnings.append(f"No competition copy saved: {error}")
+        if competition is not None:
+            name = competition
+        else:
+            try:
+                name = competition_file_name([values for _path, values in extracted])
+            except RanglistenError as error:
+                name = None
+                warnings.append(f"No competition copy saved: {error}")
         pdf_results = _add_result_sheets(workbook, extracted, warnings)
         _add_ranglisten(
             workbook, pdf_results, name, warnings, listen, listen_notes,
@@ -531,11 +556,11 @@ def create_workbook(
 
         notes = [Note("Warnung", warning) for warning in warnings] + listen_notes + notes
         warnings = warnings + [note.message for note in listen_notes if note.kind == "Warnung"]
-        copy_name = f"{name}.xlsx" if name is not None else None
+        copy_name = f"{name}.xlsx" if name is not None and save_copy else None
         write_notes_sheet(workbook, created, pdf_links, notes, copy_name)
         workbook.save(output_file)
-        if name is not None:
-            workbook.save(output_file.with_name(f"{name}.xlsx"))
+        if copy_name is not None:
+            workbook.save(output_file.with_name(copy_name))
         return warnings
     finally:
         workbook.close()

@@ -33,6 +33,39 @@ def jump(number, distance, total, rank=None):
     return values
 
 
+class TeamTests(unittest.TestCase):
+    def setUp(self):
+        team = {"_team": True}
+        self.rows = [
+            {"Bib": 8, "Name": "GER - Germany", "NSA": "GER", "Rank": 1, "Total": 400.0,
+             "Round Total 1": 190.0, "Round Total 2": 210.0, **team},
+            {**athlete("8-1", NSA="GER"), **jump(1, 120.0, 90.0), **jump(2, 125.0, 100.0)},
+            {**athlete("8-2", NSA="GER"), **jump(1, 125.0, 100.0), **jump(2, 128.0, 110.0)},
+            {"Bib": 3, "Name": "AUT - Austria", "NSA": "AUT", "Rank": 2, "Total": 380.0,
+             "Round Total 1": 200.0, "Round Total 2": 180.0, **team},
+            {**athlete("3-1", NSA="AUT"), **jump(1, 126.0, 101.0), **jump(2, 118.0, 85.0)},
+            {**athlete("3-2", NSA="AUT"), **jump(1, 124.0, 99.0), **jump(2, 121.0, 95.0)},
+        ]
+
+    def test_jumpers_group_by_group_without_start_lists(self):
+        rows, warnings = build_ranglisten([PdfResults("2026JP0300RL", self.rows)], EVENT)
+        order = [(row["JumpID"][-3:], row["Bib"]) for row in rows]
+        # Round 1: teams in bib order; round 2: weaker team after round 1 first.
+        self.assertEqual(order, [
+            ("01W", "3-1"), ("01W", "8-1"), ("01W", "3-2"), ("01W", "8-2"),
+            ("02W", "8-1"), ("02W", "3-1"), ("02W", "8-2"), ("02W", "3-2"),
+        ])
+        self.assertEqual(len(warnings), 2)
+        self.assertNotIn("GER - Germany", [row["Name"] for row in rows])
+
+    def test_start_lists_give_the_order(self):
+        pdf = PdfResults("2026JP0300RL", self.rows, start_order_1=["8-1", "3-1", "8-2", "3-2"],
+                         start_order_2=["3-1", "8-1", "3-2", "8-2"])
+        rows, warnings = build_ranglisten([pdf], EVENT)
+        self.assertEqual([row["Bib"] for row in rows], ["8-1", "3-1", "8-2", "3-2", "3-1", "8-1", "3-2", "8-2"])
+        self.assertEqual(warnings, [])
+
+
 class ColumnTests(unittest.TestCase):
     def test_columns_are_fixed(self):
         letters = {get_column_letter(i): name for i, name in enumerate(RANGLISTEN_COLUMNS, 1)}

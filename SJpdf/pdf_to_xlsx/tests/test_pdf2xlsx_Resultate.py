@@ -12,8 +12,12 @@ from pdf_to_xlsx.pdf2xlsx_Daten import extract_data_from_text
 from pdf_to_xlsx.pdf2xlsx_Resultate import (
     RESULT_COLUMNS,
     ResultsParseError,
+    _State,
+    _check_ranks,
     _parse_value,
+    _validate,
     extract_results,
+    looks_like_athlete,
     write_results_sheet,
 )
 from sj_paths import DATA_DIRECTORY
@@ -45,6 +49,23 @@ class ParseValueTests(unittest.TestCase):
             {"Gate": 9, "Gate From": 10, "Coach Gate": "©"},
         )
 
+    def test_older_coach_gate_notations(self):
+        # Swiss Timing 2024: '15->©14'; local organisers: '©11/13' (gate 11, before 13)
+        self.assertEqual(
+            _parse_value("Gate", "15->©14"),
+            {"Gate": 14, "Gate From": 15, "Coach Gate": "©"},
+        )
+        self.assertEqual(
+            _parse_value("Gate", "©11/13"),
+            {"Gate": 11, "Gate From": 13, "Coach Gate": "©"},
+        )
+
+    def test_name_without_bold_print(self):
+        for name in ("CHERVET Emma", "D'AGOSTINO Ava", "MITU-COSCA Alessia", "DEL MORO Lucrezia"):
+            self.assertTrue(looks_like_athlete(name), name)
+        for club in ("CS CHAMONIX", "Aioi Nissay Dowa Insurance Co., Ltd", "31 DEC 2003"):
+            self.assertFalse(looks_like_athlete(club), club)
+
     def test_coach_gate_without_arrow(self):
         self.assertEqual(_parse_value("Gate", "©5"), {"Gate": 5, "Coach Gate": "©"})
 
@@ -59,6 +80,31 @@ class ParseValueTests(unittest.TestCase):
     def test_unexpected_text_is_rejected(self):
         self.assertIsNone(_parse_value("Wind", "fis-ski.com"))
         self.assertIsNone(_parse_value("Distance", "12a"))
+
+
+class RankTests(unittest.TestCase):
+    def test_dense_ranks_of_winspringen_training(self):
+        rows = [{"Name": n, "Speed 1": v, "Speed Rank 1": r}
+                for n, v, r in (("A", 88.0, 1), ("B", 88.0, 1), ("C", 87.5, 2))]
+        errors = []
+        _check_ranks(rows, "Speed 1", "Speed Rank 1", errors, dense=True)
+        self.assertEqual(errors, [])
+        _check_ranks(rows, "Speed 1", "Speed Rank 1", errors)
+        self.assertEqual(errors, ["C: Speed Rank 1 2 expected 3"])
+
+    def test_ko_competition_ranks_winners_before_losers(self):
+        # Four Hills: the loser of a pair (rank 3) may have more points than a winner.
+        state = _State("test.pdf", layouts={"competition"})
+        state.rows = [
+            {"Name": name, "Rank": rank, "Total": 110.0 + wind, "Distance 1": 125.0,
+             "Distance Points 1": 60.0, "Judge Points 1": 50.0, "Wind Points 1": wind, **extra}
+            for name, rank, wind, extra in (
+                ("A", 1, 30.0, {}), ("B", 2, 10.0, {}), ("C", 3, 20.0, {"Status": "Not Qualified"}),
+            )
+        ]
+        _validate(state, "Men Individual KO Large Hill\nK-POINT 125m\nMETER VALUE 1.8\n")
+        with self.assertRaises(ResultsParseError):
+            _validate(state, "Men Large Hill Individual\nK-POINT 125m\nMETER VALUE 1.8\n")
 
 
 class ResultsSheetTests(unittest.TestCase):

@@ -46,4 +46,38 @@ Im Ordner liegen alle PDFs aller Wettkämpfe der Serie unter dem FIS-Namen
 - `archiv_log.csv` im Zielordner protokolliert pro Ordner, wann wie viele
   PDFs neu dazukamen, und Fehler einzelner PDFs.
 
-Tests: `python -m unittest test_fis_pdf_archive.py` (aus diesem Ordner).
+## xlsx pro Event-Ordner
+
+`archive_xlsx.py` schreibt in jeden Event-Ordner die Excel-Datei von
+pdf2xlsx (dieselben Sheets wie `latest event.xlsx`), benannt nach dem
+Wettkampf:
+
+```
+C:\downloaded_FIS_pdf\2026-09-13 FCM Einsiedeln LH\2026-09-13 FCM Einsiedeln HS117.xlsx
+```
+
+Datum, Kategorie und Gender kommen aus dem Ordnernamen, die SchanzenID
+(`Ort HSxxx`) aus den PDFs; als Ort gilt der Ort des PDFs mit Ländercode
+(`Einsiedeln (SUI)`), sonst der Ort des FIS-Kalenders. `JumperID` und
+`Pts / Gate DGW` werden wie bei pdf2xlsx in `SJ-Listen.xlsm` gesucht.
+
+Start mit Doppelklick auf `start_archive_xlsx.bat` (fragt nach den Saisons,
+leer = alle Ordner; öffnet am Schluss `xlsx_log.csv`) oder:
+
+```powershell
+python archive_xlsx.py --season 2024-2026
+```
+
+- Ein Ordner, dessen xlsx neuer ist als seine PDFs und `SJ-Listen.xlsm`,
+  wird übersprungen; `--force` schreibt alle neu. Nach dem Ergänzen von
+  `SJ-Listen.xlsm` werden also alle xlsx neu geschrieben.
+- Die Saison eines Ordners steht in `archiv_log.csv`.
+- Ordner ohne Resultat-PDF (Gesamtwertungen wie Four Hills oder Raw Air,
+  abgesagte Events mit nur dem Programm) bekommen keine xlsx.
+- Events auf Schanzen bis HS30 werden nicht ausgewertet (Status
+  `kleine Schanze`, eine ältere xlsx im Ordner wird gelöscht).
+- `xlsx_log.csv` im Archiv protokolliert pro Ordner Status, fehlende
+  JumperID und SchanzenID, Zahl der Warnungen und die Warnungen selbst.
+
+Tests: `python -m unittest test_fis_pdf_archive.py test_archive_xlsx.py`
+(aus diesem Ordner).

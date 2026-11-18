@@ -85,6 +85,15 @@ class SjListen:
         listed = self.by_jumper_id(rule_id)
         if any(_first_word(jumper.name) == _first_word(name) for jumper in listed):
             return listed[0].jumper_id, None
+        # 'CHERVET Jules-Lucien' is listed as 'CHERVET Jules' (FRA CHERVE JULES).
+        short_name = " ".join(word.split("-")[0] for word in str(name or "").split())
+        short = [j for j in self.by_jumper_id(proposed_jumper_id(short_name, nsa))
+                 if _first_word(j.name) == _first_word(name)]
+        if short and not listed:
+            return short[0].jumper_id, None
+        initials = self._by_initials(name, nsa)
+        if initials is not None and not listed:
+            return initials, None
         if listed:
             others = ", ".join(f"{jumper.name} ({jumper.nsa})" for jumper in listed)
             return None, f"JumperID '{rule_id}' gehört in Liste_Springer_ID zu {others}"
@@ -92,6 +101,22 @@ class SjListen:
         if special is not None:
             return special, None
         return None, f"JumperID '{rule_id}' fehlt in Liste_Springer_ID"
+
+    def _by_initials(self, name: Any, nsa: Any) -> str | None:
+        """Olympic lists print first names as initials: 'SUNDAL KE' is
+        SUNDAL Kristoffer Eriksen, 'SCHARFENBERG AF' SCHARFENBERG Anna-Fay.
+        Only a single listed jumper of the nation must fit."""
+        words = str(name or "").split()
+        if len(words) != 2 or not re.fullmatch(r"[A-Z]{1,3}", words[1]):
+            return None
+        found = [
+            jumper for jumper in self.jumpers
+            if _key(jumper.nsa) == _key(nsa) and _first_word(jumper.name) == _first_word(name)
+            and "".join(part[0] for part in re.split(r"[\s-]+", " ".join(jumper.name.split()[1:])) if part).upper()
+            == words[1]
+        ]
+        ids = {jumper.jumper_id for jumper in found}
+        return ids.pop() if len(ids) == 1 else None
 
     def has_hill(self, hill: str) -> bool:
         return _key(hill) in self.hill_dgw

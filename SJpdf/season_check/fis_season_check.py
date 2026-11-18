@@ -19,6 +19,7 @@ Downloads are cached outside the synced data folder, so a second run is fast.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import importlib.util
 import os
@@ -46,7 +47,11 @@ from fis_web import (  # noqa: E402
     parse_document,
     read_text,
 )
-from pdf_to_xlsx.pdf2xlsx_Daten import PdfParseError, extract_data_from_text  # noqa: E402
+from pdf_to_xlsx.pdf2xlsx_Daten import (  # noqa: E402
+    PdfParseError,
+    extract_data_from_text,
+    local_hill_values,
+)
 from pdf_to_xlsx.pdf2xlsx_Listen import (  # noqa: E402
     SJ_LISTEN_FILE,
     SjListen,
@@ -66,6 +71,10 @@ _spec.loader.exec_module(_downloader)
 
 
 OUTPUT_FILE = DATA_DIRECTORY / "Fehlende_JumperID.xlsx"
+# PDF archive of pdf_archive/fis_pdf_archive.py: PDFs found there are not downloaded again.
+ARCHIVE_DIRECTORY = Path(r"C:\downloaded_FIS_pdf")
+MAX_SKIPPED_HILL_SIZE = 30  # competitions on hills up to HS30 are not evaluated
+ARCHIVE_LINKS_FILENAME = "pdf_links.csv"
 CACHE_DIRECTORY = (
     Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "SJpdf" / "cache"
 )
@@ -120,13 +129,18 @@ class Fetcher:
         cache_directory: Path = CACHE_DIRECTORY,
         log: Callable[[str], None] = print,
         use_cache: bool = True,
+        local_files: dict[str, Path] | None = None,
     ):
         self.cache_directory = cache_directory
         self.log = log
         self.use_cache = use_cache  # False: always read fresh (pages that still change)
+        self.local_files = local_files or {}  # FIS link -> PDF already downloaded
         self._last_request = 0.0
 
     def get(self, url: str) -> bytes:
+        local_file = self.local_files.get(url)
+        if local_file is not None and local_file.is_file():
+            return local_file.read_bytes()
         cache_file = self.cache_directory / hashlib.sha1(url.encode()).hexdigest()
         if self.use_cache and cache_file.is_file():
             return cache_file.read_bytes()
@@ -246,34 +260,8 @@ def _number(text: str) -> float | int:
     return int(value) if value.is_integer() else value
 
 
-def _local_hill_values(text: str) -> dict[str, Any]:
-    """Hill data in the formats of local organisers, e.g. 'Hill Size / (95%)
-    106m (100,5m)', 'HILL-SIZE / (95%) 117m (111m)', 'Hill Size: 66'."""
-    number = r"(\d+(?:[.,]\d+)?)"
-    # 'Hill Size', 'HILL-SIZE', optionally followed by '/ (95%)' and ':'
-    hill_size = r"Hill[- ]?Size\b(?:\s*/\s*\(\s*95\s*%\s*\))?\s*:?\s*"
-    patterns = {
-        "Hill Size": rf"{hill_size}{number}\s*m?\b",
-        "HS 95%": rf"{hill_size}\d+\s*m?\s*\(\s*{number}\s*m?\s*\)",
-        "K-Punkt": rf"K-?Point\b\s*:?\s*{number}",
-        "Meter Value": rf"Meter\s*Value\b\s*:?\s*{number}",
-        "Gate Factor": rf"Gate\s*Fa[ck]tor\b\s*:?\s*{number}",
-    }
-    values: dict[str, Any] = {}
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.I)
-        if match:
-            values[key] = _number(match.group(1))
-    wind = re.search(
-        rf"(?:head\s*/\s*tail|Head/Tail)\)?\s*:?\s*{number}\s*/\s*{number}", text, re.I
-    )
-    if wind:
-        values["HWC"], values["TWC"] = _number(wind.group(1)), _number(wind.group(2))
-    if "Hill Size" not in values:
-        match = re.search(r"\bHS\s*(\d{2,3})\b", text)
-        if match:
-            values["Hill Size"] = int(match.group(1))
-    return values
+# Moved to pdf2xlsx_Daten (also used by pdf2xlsx); old name for the tests.
+_local_hill_values = local_hill_values
 
 
 def pdf_hill(text: str, place: str) -> dict[str, Any] | None:
@@ -335,11 +323,42 @@ class SeasonData:
     problems: list[str] = field(default_factory=list)
 
 
-def collect_season(season: int, fetcher: Fetcher, log: Callable[[str], None] = print) -> SeasonData:
-    data = SeasonData()
+def archive_links(archive_directory: Path | None) -> dict[str, Path]:
+    """{FIS link: PDF} of all event folders of the PDF archive (pdf_links.csv)."""
+    links: dict[str, Path] = {}
+    if archive_directory is None or not archive_directory.is_dir():
+        return links
+    for links_file in archive_directory.glob(f"*/{ARCHIVE_LINKS_FILENAME}"):
+        with links_file.open(encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("url") and row.get("pdf"):
+                    links[row["url"]] = links_file.parent / row["pdf"]
+    return links
+
+
+def parse_seasons(values: Iterable[str]) -> list[int]:
+    """'2026', '2024-2026' or several values -> sorted seasons."""
+    seasons: set[int] = set()
+    for value in values:
+        for part in str(value).replace(",", " ").split():
+            first, _, last = part.partition("-")
+            seasons.update(range(int(first), int(last or first) + 1))
+    return sorted(seasons)
+
+
+def season_label(seasons: Iterable[int]) -> str:
+    seasons = sorted(seasons)
+    return str(seasons[0]) if len(seasons) == 1 else f"{seasons[0]}-{seasons[-1]}"
+
+
+def collect_season(
+    season: int, fetcher: Fetcher, log: Callable[[str], None] = print, data: SeasonData | None = None
+) -> SeasonData:
+    """Athletes and hills of a season (added to data when given)."""
+    data = data if data is not None else SeasonData()
     events = calendar_events(fetcher.text(calendar_url(season)))
     for number, (eventid, place) in enumerate(events, start=1):
-        log(f"[{number}/{len(events)}] Event {eventid}: {place}")
+        log(f"Saison {season} [{number}/{len(events)}] Event {eventid}: {place}")
         html = fetcher.text(detail_url(eventid, season))
         records = _competition_rows(html, eventid, place, season, warn=data.problems.append)
         attachments = {competition.codex: competition.attachments for competition in _downloader.competition_rows(html)}
@@ -358,6 +377,9 @@ def collect_season(season: int, fetcher: Fetcher, log: Callable[[str], None] = p
                     text = ""
                 people = pdf_people(text)
                 hill = pdf_hill(text, place) if text else None
+                if hill is not None and (hill.get("Hill Size") or 999) <= MAX_SKIPPED_HILL_SIZE:
+                    data.competitions -= 1  # small hills (up to HS30): not evaluated
+                    continue
                 if hill is None and text:
                     data.problems.append(f"{label}: Schanze (HS) nicht im PDF gefunden.")
                 elif hill is not None:
@@ -542,21 +564,38 @@ def write_workbook(result: Comparison, listen: SjListen, season: int, data: Seas
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Fehlende JumperID und SchanzenID einer FIS-Saison.")
-    parser.add_argument("--season", type=int, required=True, help="FIS-Saison, z. B. 2026 (= 2025/26)")
-    parser.add_argument("--output", type=Path, default=OUTPUT_FILE)
+    parser = argparse.ArgumentParser(description="Fehlende JumperID und SchanzenID von FIS-Saisons.")
+    parser.add_argument(
+        "--season", nargs="+", required=True,
+        help="FIS-Saison, z. B. 2026 (= 2025/26); mehrere: 2024 2025 2026 oder 2024-2026",
+    )
+    parser.add_argument("--output", type=Path, help=f"Standard: {OUTPUT_FILE} (mehrere Saisons: mit Saisons im Namen)")
     parser.add_argument("--listen", type=Path, default=SJ_LISTEN_FILE)
+    parser.add_argument(
+        "--archive", type=Path, default=ARCHIVE_DIRECTORY,
+        help=f"PDF-Archiv (pdf_archive), dessen PDFs nicht neu geladen werden (Standard {ARCHIVE_DIRECTORY})",
+    )
     args = parser.parse_args(argv)
+    seasons = parse_seasons(args.season)
+    label = season_label(seasons)
+    output = args.output or (
+        OUTPUT_FILE if len(seasons) == 1 else OUTPUT_FILE.with_name(f"{OUTPUT_FILE.stem} {label}.xlsx")
+    )
 
     listen = read_sj_listen(args.listen)
-    fetcher = Fetcher()
-    data = collect_season(args.season, fetcher)
+    local_files = archive_links(args.archive)
+    if local_files:
+        print(f"{len(local_files)} PDFs aus dem Archiv {args.archive}.")
+    fetcher = Fetcher(local_files=local_files)
+    data = SeasonData()
+    for season in seasons:
+        collect_season(season, fetcher, data=data)
     result = compare(data, listen)
     complete_from_biography(result.missing, fetcher)
-    write_workbook(result, listen, args.season, data, args.output)
+    write_workbook(result, listen, label, data, output)
     print(
         f"{len(result.missing)} fehlende JumperID, {len(result.check)} zu prüfen, "
-        f"{len(result.missing_hills)} fehlende SchanzenID: {args.output}"
+        f"{len(result.missing_hills)} fehlende SchanzenID: {output}"
     )
     return 0
 

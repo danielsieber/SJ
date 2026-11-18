@@ -24,17 +24,17 @@ from openpyxl.workbook import Workbook
 
 if __package__:
     from .pdf2xlsx_Daten import PdfParseError
-    from .pdf2xlsx_Resultate import HEADER_FILL
+    from .pdf2xlsx_Resultate import GENDER_SUFFIX, HEADER_FILL, looks_like_athlete
 else:
     from pdf2xlsx_Daten import PdfParseError
-    from pdf2xlsx_Resultate import HEADER_FILL
+    from pdf2xlsx_Resultate import GENDER_SUFFIX, HEADER_FILL, looks_like_athlete
 
 
 START_LIST_COLUMNS = ("Start Order", "Bib", "Name")
 # Start list per round of a competition (RL): (first round, final round).
 START_LIST_SUFFIXES = ("SLR1", "SLRF")
 FOOTER_PATTERN = re.compile(r"^\d{1,2} [A-Z]{3} \d{4} / .+ / \d+$")
-NUMBER_PATTERN = re.compile(r"^\d{1,3}$")
+NUMBER_PATTERN = re.compile(r"^\*?\d{1,3}(?:-\d)?$")  # team events: '8-1'; KO lucky loser: '*35'
 MAX_LABEL_DISTANCE = 12  # pt between a number and its column label centre
 MAX_NAME_DISTANCE = 12  # pt between the bib and the athlete name (vertical)
 
@@ -65,7 +65,7 @@ def _middle(box) -> float:
 
 def _page_rows(page: pymupdf.Page, page_number: int, name: str) -> list[dict[str, Any]]:
     words = page.get_text("words")
-    bib_labels = [word for word in words if word[4] == "BIB"]
+    bib_labels = [word for word in words if word[4].upper() in ("BIB", "STNR")]  # StNr: WinSpringen
     if not bib_labels:
         return []
     if len(bib_labels) > 1:
@@ -86,9 +86,9 @@ def _page_rows(page: pymupdf.Page, page_number: int, name: str) -> list[dict[str
     name_left = None
     for word in words:
         same_header = abs(word[1] - bib_label[1]) < 15
-        if word[4] in ("START", "ORD.") and same_header and word[2] < bib_label[0]:
+        if word[4].upper() in ("START", "ORD.", "ORDER") and same_header and word[2] < bib_label[0]:
             labels["Start Order"] = _centre(word)
-        if word[4] == "NAME" and abs(word[1] - bib_label[1]) < 3:
+        if word[4].upper() == "NAME" and abs(word[1] - bib_label[1]) < 3:
             name_left = word[0]
     if name_left is None:
         raise StartListError(f"{name}: page {page_number}: NAME column not found.")
@@ -97,6 +97,11 @@ def _page_rows(page: pymupdf.Page, page_number: int, name: str) -> list[dict[str
     for word in words:
         if not NUMBER_PATTERN.match(word[4]) or not bib_label[3] < word[1] < bottom - 1:
             continue
+        if any(
+            other[4].casefold() in ("group", "gruppe") and abs(other[1] - word[1]) < 2 and other[0] < word[0]
+            for other in words
+        ):
+            continue  # heading 'Group 1 Women' of a team start list
         column = min(labels, key=lambda key: abs(labels[key] - _centre(word)))
         if abs(labels[column] - _centre(word)) > MAX_LABEL_DISTANCE:
             continue
@@ -105,17 +110,28 @@ def _page_rows(page: pymupdf.Page, page_number: int, name: str) -> list[dict[str
     rows = []
     for word in sorted(bibs, key=_middle):
         y = _middle(word)
-        names = [
-            span
+        # A span may also start with the bib ('21 JANCAR Ziga').
+        column = [
+            {**span, "text": re.sub(rf"^{re.escape(word[4])}\s+", "", span["text"].strip())}
             for span in spans
-            if span["flags"] & 16
-            and name_left - 2 <= span["bbox"][0] < name_left + 40
+            if span["bbox"][0] < name_left + 40
+            and (name_left - 5 <= span["bbox"][0] or span["text"].strip().startswith(f"{word[4]} "))
+            and span["bbox"][2] > name_left + 5
             and abs(_middle(span["bbox"]) - y) < MAX_NAME_DISTANCE
         ]
+        names = [span for span in column if span["flags"] & 16]
+        if not names:
+            # Name not printed bold: the closest 'SURNAME Firstname'.
+            names = [span for span in column if looks_like_athlete(span["text"])]
+        if not names:
+            # Name in capitals only ('BARKATS BRANDINA DAVID'): the span at the NAME label.
+            names = [span for span in column if abs(span["bbox"][0] - name_left) < 3]
         if not names:
             raise StartListError(f"{name}: page {page_number}: no name for bib {word[4]}.")
         athlete = min(names, key=lambda span: abs(_middle(span["bbox"]) - y))
-        row = {"Bib": int(word[4]), "Name": athlete["text"].strip()}
+        bib_text = word[4].lstrip("*")
+        bib = bib_text if "-" in bib_text else int(bib_text)
+        row = {"Bib": bib, "Name": GENDER_SUFFIX.sub("", athlete["text"].strip())}
         if "Start Order" in labels:
             same_line = [order for order in orders if abs(_middle(order) - y) < 3]
             if len(same_line) != 1:
