@@ -56,7 +56,7 @@ Sekunden; eine ganze Saison dauert beim ersten Lauf etwa eine halbe Stunde.
 - `Fehlende_JumperID`: Spalten A:G wie `Liste_Springer_ID` (JumperID,
   Name, NSA, Gender, DoB, FIS_Code, JG), zum Einfügen ab Spalte A; `Age`
   berechnet die Tabelle. Die JumperID ist ein Vorschlag nach der Regel der
-  Liste (NSA, je fünf Buchstaben des ersten und zweiten Namensworts). Rot
+  Liste (NSA, je sechs Buchstaben des ersten und zweiten Namensworts). Rot
   markiert: JumperID schon vergeben, Gender oder Geburtsdatum unbekannt.
   Gelb: FIS kennt nur den Jahrgang (meist Nachwuchs); das Geburtsdatum ist
   dann wie in der Liste üblich der 1. Januar.

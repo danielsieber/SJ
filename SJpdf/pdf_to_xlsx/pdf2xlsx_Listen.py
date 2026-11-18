@@ -57,12 +57,41 @@ class SjListen:
     jumpers: list[Jumper] = field(default_factory=list)
     hills: dict[str, str] = field(default_factory=dict)  # key -> SchanzenID as written
 
-    def by_fis_code(self, fis_code: Any) -> Jumper | None:
+    def all_by_fis_code(self, fis_code: Any) -> list[Jumper]:
+        """All entries with this FIS code (a name change may be listed twice)."""
         code = str(fis_code).strip()
-        return next((jumper for jumper in self.jumpers if str(jumper.fis_code).strip() == code), None)
+        return [jumper for jumper in self.jumpers if str(jumper.fis_code).strip() == code]
+
+    def by_fis_code(self, fis_code: Any) -> Jumper | None:
+        found = self.all_by_fis_code(fis_code)
+        return found[0] if found else None
 
     def jumper_id(self, name: Any, nsa: Any) -> str | None:
         return self.jumper_ids.get((_key(name), _key(nsa)))
+
+    def by_jumper_id(self, jumper_id: str) -> list[Jumper]:
+        return [jumper for jumper in self.jumpers if _key(jumper.jumper_id) == _key(jumper_id)]
+
+    def resolve(self, name: Any, nsa: Any) -> tuple[str | None, str | None]:
+        """JumperID of an athlete of a PDF: (JumperID, problem).
+
+        The ID is built by the rule from NSA and name and looked up in the
+        list. It is only accepted when a listed jumper with this ID has the
+        same surname (first word); 'AUT STEINA SIMON' for STEINBERGER Simon is
+        not STEINACHER Simon. When the rule ID is not listed, name and NSA are
+        looked up (special IDs such as 'ITA DEL LUCREZ').
+        """
+        rule_id = proposed_jumper_id(name, nsa)
+        listed = self.by_jumper_id(rule_id)
+        if any(_first_word(jumper.name) == _first_word(name) for jumper in listed):
+            return listed[0].jumper_id, None
+        if listed:
+            others = ", ".join(f"{jumper.name} ({jumper.nsa})" for jumper in listed)
+            return None, f"JumperID '{rule_id}' gehört in Liste_Springer_ID zu {others}"
+        special = self.jumper_id(name, nsa)
+        if special is not None:
+            return special, None
+        return None, f"JumperID '{rule_id}' fehlt in Liste_Springer_ID"
 
     def has_hill(self, hill: str) -> bool:
         return _key(hill) in self.hill_dgw
@@ -71,15 +100,23 @@ class SjListen:
         return self.hill_dgw.get(_key(hill))
 
 
+ID_LETTERS = 6  # letters taken from the first and the second word of the name
+
+
 def proposed_jumper_id(name: Any, nsa: Any) -> str:
-    """JumperID by the rule of Liste_Springer_ID: NSA, then the first five
+    """JumperID by the rule of Liste_Springer_ID: NSA, then the first six
     letters of the first and of the second word of the name.
 
-    'ACHLEITNER Alexander' (AUT) -> 'AUT ACHLE ALEXA'.
+    'ACHLEITNER Alexander' (AUT) -> 'AUT ACHLEI ALEXAN'.
     """
     words = str(name or "").split()
-    parts = [str(nsa or "").strip().upper()] + [word[:5].upper() for word in words[:2]]
+    parts = [str(nsa or "").strip().upper()] + [word[:ID_LETTERS].upper() for word in words[:2]]
     return " ".join(part for part in parts if part)
+
+
+def _first_word(name: Any) -> str:
+    words = str(name or "").split()
+    return words[0].casefold() if words else ""
 
 
 def hill_name(place: Any, hill_size: Any) -> str | None:

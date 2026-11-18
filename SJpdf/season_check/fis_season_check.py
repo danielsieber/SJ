@@ -388,13 +388,22 @@ class Comparison:
 
 
 def compare(data: SeasonData, listen: SjListen) -> Comparison:
+    """An athlete is listed when name and NSA are in Liste_Springer_ID, or when
+    an entry with the same FIS code has the JumperID the rule gives for the
+    FIS name ('BROBECK Hannah Christina' -> 'NOR BROBE HANNA'). A FIS code
+    listed only under another JumperID (name change) goes to 'Prüfen'.
+    """
     missing, check = [], []
     for athlete in data.athletes.values():
-        listed = listen.by_fis_code(athlete.fis_code)
-        if listed is not None:
-            if (_key(listed.name), _key(listed.nsa)) != (_key(athlete.name), _key(athlete.nsa)):
-                check.append((athlete, listed))
-        elif listen.jumper_id(athlete.name, athlete.nsa) is None:
+        if listen.jumper_id(athlete.name, athlete.nsa) is not None:
+            continue
+        same_code = listen.all_by_fis_code(athlete.fis_code)
+        proposed = _key(proposed_jumper_id(athlete.name, athlete.nsa))
+        if any(_key(jumper.jumper_id) == proposed for jumper in same_code):
+            continue
+        if same_code:
+            check.append((athlete, same_code[0]))
+        else:
             missing.append(athlete)
     missing_hills = [hill for key, hill in data.hills.items() if key not in listen.hills]
     return Comparison(missing, check, missing_hills)

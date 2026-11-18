@@ -78,12 +78,15 @@ AH `PDF` (source PDF of the row).
 Jumpers and hills are checked against `SJ-Listen.xlsm` in the SJpdf data
 folder (`pdf2xlsx_Listen.py`; the file is only read, it may be open in Excel):
 
-- `JumperID` in `Ranglisten` comes from `Liste_Springer_ID`, found by
-  name and NSA. A jumper who is not listed gets an empty light-red JumperID
-  cell and a red warning
-  in `Notes` with a proposed ID (NSA, first five letters of the first and of
-  the second word of the name, e.g. `AUT ACHLE ALEXA`). When all are listed,
-  `Notes` says so.
+- `JumperID` in `Ranglisten` is built from NSA and name by the rule of
+  `Liste_Springer_ID` (NSA, first six letters of the first and of the second
+  word of the name, e.g. `ACHLEITNER Alexander` -> `AUT ACHLEI ALEXAN`) and
+  must be listed there for a jumper with the same surname (first word), so
+  `AUT STEINA SIMON` of STEINACHER Simon is not taken for another jumper.
+  When the rule ID is not listed, name and NSA are looked up (special IDs,
+  e.g. `ITA DEL LUCREZ` for DEL BIANCO Lucrezia). Otherwise the JumperID cell
+  stays empty (light red) and `Notes` shows a red warning; when all are
+  found, `Notes` says so.
 - `Pts / Gate DGW` in `Daten` (row below `TWC`) is the value
   `Pts / Gate für DGW` of the hill in `Liste_Schanzen_ID`, found by place
   and hill size (SchanzenID `Einsiedeln HS117`). `Notes` shows whether the

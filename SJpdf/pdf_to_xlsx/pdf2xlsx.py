@@ -291,20 +291,17 @@ def _add_hill_values(
 
 
 def _add_jumper_ids(rows: list[dict], listen: SjListen | None, notes: list[Note]) -> None:
-    """Set JumperID of each Ranglisten row from Liste_Springer_ID."""
+    """Set JumperID of each Ranglisten row: built by the rule from NSA and
+    name, checked against Liste_Springer_ID (see SjListen.resolve)."""
     if listen is None:
         return
-    missing: dict[tuple, None] = {}
+    missing: dict[tuple, str] = {}
     for row in rows:
-        row["JumperID"] = listen.jumper_id(row.get("Name"), row.get("NSA"))
-        if row["JumperID"] is None:
-            missing.setdefault((row.get("Name"), row.get("NSA")), None)
-    for name, nsa in missing:
-        notes.append(Note(
-            "Warnung",
-            f"Ranglisten: JumperID fehlt in Liste_Springer_ID: {name} ({nsa}), "
-            f"Vorschlag '{proposed_jumper_id(name, nsa)}'.",
-        ))
+        row["JumperID"], problem = listen.resolve(row.get("Name"), row.get("NSA"))
+        if problem is not None:
+            missing.setdefault((row.get("Name"), row.get("NSA")), problem)
+    for (name, nsa), problem in missing.items():
+        notes.append(Note("Warnung", f"Ranglisten: {problem}: {name} ({nsa})."))
     if not missing:
         notes.append(Note("Info", "Ranglisten: Alle JumperID in SJ-Listen.xlsm vorhanden."))
 

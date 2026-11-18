@@ -8,7 +8,9 @@ from openpyxl import Workbook, load_workbook
 
 from pdf_to_xlsx.pdf2xlsx import create_workbook
 from pdf_to_xlsx.pdf2xlsx_Listen import (
+    Jumper,
     ListenError,
+    SjListen,
     hill_name,
     proposed_jumper_id,
     read_sj_listen,
@@ -57,9 +59,31 @@ def daten_values():
 
 class RuleTests(unittest.TestCase):
     def test_proposed_jumper_id(self):
-        self.assertEqual(proposed_jumper_id("ACHLEITNER Alexander", "AUT"), "AUT ACHLE ALEXA")
+        self.assertEqual(proposed_jumper_id("ACHLEITNER Alexander", "AUT"), "AUT ACHLEI ALEXAN")
         self.assertEqual(proposed_jumper_id("HAGEN Ida Marie", "NOR"), "NOR HAGEN IDA")
-        self.assertEqual(proposed_jumper_id("PERCL SERUCNIK Lovro", "SLO"), "SLO PERCL SERUC")
+        self.assertEqual(proposed_jumper_id("PERCL SERUCNIK Lovro", "SLO"), "SLO PERCL SERUCN")
+
+    def test_rule_id_needs_the_same_surname_else_name_lookup(self):
+        listen = SjListen(
+            jumper_ids={("del bianco lucrezia", "ita"): "ITA DEL LUCREZ"},
+            jumpers=[
+                Jumper("AUT STEINB SIMON", "STEINBERGER Simon", "AUT", 8091),
+                Jumper("NOR BROBEC HANNAH", "BROBECK Hannah", "NOR", 220607),
+                Jumper("ITA DEL LUCREZ", "DEL BIANCO Lucrezia", "ITA", 220365),
+            ],
+        )
+        # second first name in the PDF: same rule ID, same surname
+        self.assertEqual(listen.resolve("BROBECK Hannah Christina", "NOR"), ("NOR BROBEC HANNAH", None))
+        # special ID: rule ID 'ITA DEL BIANCO' not listed, found by name
+        self.assertEqual(listen.resolve("DEL BIANCO Lucrezia", "ITA"), ("ITA DEL LUCREZ", None))
+        # rule ID of another jumper (other surname): not taken
+        jumper_id, problem = listen.resolve("STEINBERG Simon", "AUT")
+        self.assertIsNone(jumper_id)
+        self.assertIn("STEINBERGER Simon (AUT)", problem)
+        self.assertEqual(
+            listen.resolve("MUSTER Hans", "SUI"),
+            (None, "JumperID 'SUI MUSTER HANS' fehlt in Liste_Springer_ID"),
+        )
 
     def test_hill_name(self):
         self.assertEqual(hill_name("Einsiedeln (SUI)", 117), "Einsiedeln HS117")
@@ -72,11 +96,11 @@ class ReadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = write_listen(
                 Path(folder) / "SJ-Listen.xlsx",
-                jumpers=[("SUI HOESL LION", "HOESLI Lion", "SUI", "M")],
+                jumpers=[("SUI HOESLI LION", "HOESLI Lion", "SUI", "M")],
                 hills=[("Einsiedeln HS117", 4.4167)],
             )
             listen = read_sj_listen(path)
-        self.assertEqual(listen.jumper_id("HOESLI  Lion", "sui"), "SUI HOESL LION")
+        self.assertEqual(listen.jumper_id("HOESLI  Lion", "sui"), "SUI HOESLI LION")
         self.assertIsNone(listen.jumper_id("HOESLI Lion", "AUT"))
         self.assertEqual(listen.dgw("einsiedeln hs117"), 4.4167)
 
@@ -113,9 +137,9 @@ class WorkbookTests(unittest.TestCase):
             listen_file = write_listen(
                 Path(folder) / "SJ-Listen.xlsx",
                 jumpers=[
-                    ("SUI HOESL LION", "HOESLI Lion", "SUI", "M"),
-                    ("SUI MUSTE HANS", "MUSTER Hans Peter", "SUI", "M"),
-                    ("SUI MUSTE FRITZ", "MUSTER Fritz", "SUI", "M"),
+                    ("SUI HOESLI LION", "HOESLI Lion", "SUI", "M"),
+                    ("SUI MUSTER HANS", "MUSTER Hans Peter", "SUI", "M"),
+                    ("SUI MUSTER FRITZ", "MUSTER Fritz", "SUI", "M"),
                 ],
                 hills=[("Einsiedeln HS117", 4.4167)],
             )
@@ -126,7 +150,7 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(ranglisten["AE1"].value, "JumperID")
             self.assertEqual(
                 [ranglisten.cell(row=row, column=31).value for row in (2, 3, 4)],
-                ["SUI HOESL LION", "SUI MUSTE HANS", "SUI MUSTE FRITZ"],
+                ["SUI HOESLI LION", "SUI MUSTER HANS", "SUI MUSTER FRITZ"],
             )
             daten = workbook["Daten"]
             labels = [cell.value for cell in daten["A"]]
@@ -146,7 +170,7 @@ class WorkbookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             listen_file = write_listen(
                 Path(folder) / "SJ-Listen.xlsx",
-                jumpers=[("SUI HOESL LION", "HOESLI Lion", "SUI", "M")],
+                jumpers=[("SUI HOESLI LION", "HOESLI Lion", "SUI", "M")],
                 hills=[("Engelberg HS140", 5.1)],
             )
             warnings, workbook = self.convert(folder, listen_file)
@@ -154,10 +178,10 @@ class WorkbookTests(unittest.TestCase):
                 warnings,
                 [
                     "Daten: SchanzenID Einsiedeln HS117 fehlt in Liste_Schanzen_ID (SJ-Listen.xlsm).",
-                    "Ranglisten: JumperID fehlt in Liste_Springer_ID: MUSTER Hans Peter (SUI), "
-                    "Vorschlag 'SUI MUSTE HANS'.",
-                    "Ranglisten: JumperID fehlt in Liste_Springer_ID: MUSTER Fritz (SUI), "
-                    "Vorschlag 'SUI MUSTE FRITZ'.",
+                    "Ranglisten: JumperID 'SUI MUSTER HANS' fehlt in Liste_Springer_ID: "
+                    "MUSTER Hans Peter (SUI).",
+                    "Ranglisten: JumperID 'SUI MUSTER FRITZ' fehlt in Liste_Springer_ID: "
+                    "MUSTER Fritz (SUI).",
                 ],
             )
             ranglisten = workbook["Ranglisten"]

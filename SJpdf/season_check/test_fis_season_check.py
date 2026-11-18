@@ -97,10 +97,10 @@ class ParserTests(unittest.TestCase):
 class CompareTests(unittest.TestCase):
     def setUp(self):
         self.listen = SjListen(
-            jumper_ids={("toth daniela vasilica", "rou"): "ROU TOTH DANIE",
-                        ("rochas caroline", "fra"): "FRA ROCHA CAROL"},
-            jumpers=[Jumper("ROU TOTH DANIE", "TOTH Daniela Vasilica", "ROU", 6563),
-                     Jumper("FRA ROCHA CAROL", "ROCHAS Caroline", "FRA", 5649)],
+            jumper_ids={("toth daniela vasilica", "rou"): "ROU TOTH DANIEL",
+                        ("rochas caroline", "fra"): "FRA ROCHAS CAROLI"},
+            jumpers=[Jumper("ROU TOTH DANIEL", "TOTH Daniela Vasilica", "ROU", 6563),
+                     Jumper("FRA ROCHAS CAROLI", "ROCHAS Caroline", "FRA", 5649)],
             hills={"courchevel hs132": "Courchevel HS132"},
         )
         self.data = season.SeasonData()
@@ -117,8 +117,21 @@ class CompareTests(unittest.TestCase):
         result = season.compare(self.data, self.listen)
         self.assertEqual(sorted(a.name for a in result.missing), ["MUSTER Anna", "MUSTER Annina"])
         self.assertEqual([(a.name, l.jumper_id) for a, l in result.check],
-                         [("HARALAMBIE Daniela", "ROU TOTH DANIE")])
+                         [("HARALAMBIE Daniela", "ROU TOTH DANIEL")])
         self.assertEqual([h.hill_id for h in result.missing_hills], ["Klingenthal HS66"])
+
+    def test_same_jumper_id_or_second_entry_is_no_name_change(self):
+        # BROBECK: FIS has a second first name, the rule gives the same JumperID
+        self.listen.jumpers.append(Jumper("NOR BROBEC HANNAH", "BROBECK Hannah", "NOR", 220607))
+        self.data.athletes["220607"] = season.Athlete(
+            "220607", "BROBECK Hannah Christina", "NOR", 2008, None, {"F"}
+        )
+        # HARALAMBIE: new name listed as a second entry with the same FIS code
+        self.listen.jumper_ids[("haralambie daniela", "rou")] = "ROU HARALA DANIEL"
+        self.listen.jumpers.append(Jumper("ROU HARALA DANIEL", "HARALAMBIE Daniela", "ROU", 6563))
+        result = season.compare(self.data, self.listen)
+        self.assertEqual(result.check, [])
+        self.assertEqual(sorted(a.name for a in result.missing), ["MUSTER Anna", "MUSTER Annina"])
 
     def test_only_birth_year_gives_first_of_january(self):
         athlete = season.Athlete("9999", "MUSTER Anna", "SUI", 2011, None, {"F"})
@@ -135,7 +148,7 @@ class CompareTests(unittest.TestCase):
             sheet = workbook["Fehlende_JumperID"]
             rows = list(sheet.iter_rows(values_only=True))
             self.assertEqual(rows[0][:7], season.JUMPER_HEADERS)
-            self.assertEqual([row[0] for row in rows[1:]], ["SUI MUSTE ANNA", "SUI MUSTE ANNIN"])
+            self.assertEqual([row[0] for row in rows[1:]], ["SUI MUSTER ANNA", "SUI MUSTER ANNINA"])
             anna = rows[1]
             self.assertEqual(anna[1:7], ("MUSTER Anna", "SUI", "F", anna[4], 9999, 2008))
             self.assertEqual(anna[4].date(), date(2008, 5, 1))
