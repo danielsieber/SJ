@@ -5,6 +5,7 @@ Tools for FIS ski jumping PDFs:
 - `raceid_crawler` – reads the FIS calendar into the sheet `Event_ID` of `SJ-Listen.xlsm`
 - `pdf_download` – downloads all PDFs for a Codex into `pdf`
 - `pdf_to_xlsx` – extracts result PDFs into `latest event.xlsx`
+- `season_check` – lists jumpers and hills of a whole FIS season that are missing in `SJ-Listen.xlsm` (`Fehlende_JumperID.xlsx`)
 
 ## Data folder
 

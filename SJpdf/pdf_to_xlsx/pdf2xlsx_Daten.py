@@ -101,6 +101,10 @@ def _number(value: str) -> int | float:
     return int(parsed) if parsed.is_integer() else parsed
 
 
+# The title starts with FIS, optionally after up to three sponsor words.
+TITLE_PATTERN = re.compile(r"^(?P<sponsor>(?:[A-Z0-9&.'-]+\s+){0,3}?)FIS\b", re.I)
+
+
 def _competition_type(title: str) -> str:
     result = re.sub(r"\b(?:FIS|SKI|JUMPING|MEN|WOMEN|MIXED)\b", " ", title, flags=re.I)
     result = " ".join(result.split())
@@ -254,13 +258,16 @@ def extract_data_from_text(text: str, pdf_name: str = "<PDF>") -> dict[str, Any]
     """Parse general data and the competition/footer sections from PDF text."""
     lines = _header_lines(text)
     title_index = next(
-        (index for index, line in enumerate(lines) if re.match(r"^FIS\b", line, re.I)),
+        (index for index, line in enumerate(lines) if TITLE_PATTERN.match(line)),
         None,
     )
     if title_index is None:
         raise PdfParseError(f"{pdf_name}: could not find the FIS title.")
 
-    title = lines[title_index]
+    # Without a sponsor in front: 'VIESSMANN FIS SKI JUMPING WORLD CUP'
+    # -> 'FIS SKI JUMPING WORLD CUP'.
+    title_match = TITLE_PATTERN.match(lines[title_index])
+    title = lines[title_index][title_match.end("sponsor"):].strip()
     date_index = next(
         (index for index, line in enumerate(lines) if DATE_PATTERN.search(line)),
         None,
@@ -320,6 +327,10 @@ def extract_data_from_text(text: str, pdf_name: str = "<PDF>") -> dict[str, Any]
         if location_index is None:
             location_index = 0
         place = detail_lines[location_index]
+        # 'Engelberg (SUI) Start Time Trial 11:00' -> 'Engelberg (SUI)'
+        country = re.search(r"\([A-Z]{3}\)", place)
+        if country:
+            place = place[: country.end()]
         if location_index + 1 < len(detail_lines):
             hill_text = detail_lines[location_index + 1]
 

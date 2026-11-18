@@ -42,10 +42,24 @@ def _key(text: Any) -> str:
     return " ".join(str(text or "").split()).casefold()
 
 
+@dataclass(frozen=True)
+class Jumper:
+    jumper_id: str
+    name: str
+    nsa: str
+    fis_code: Any
+
+
 @dataclass
 class SjListen:
     jumper_ids: dict[tuple[str, str], str] = field(default_factory=dict)
     hill_dgw: dict[str, Any] = field(default_factory=dict)
+    jumpers: list[Jumper] = field(default_factory=list)
+    hills: dict[str, str] = field(default_factory=dict)  # key -> SchanzenID as written
+
+    def by_fis_code(self, fis_code: Any) -> Jumper | None:
+        code = str(fis_code).strip()
+        return next((jumper for jumper in self.jumpers if str(jumper.fis_code).strip() == code), None)
 
     def jumper_id(self, name: Any, nsa: Any) -> str | None:
         return self.jumper_ids.get((_key(name), _key(nsa)))
@@ -106,11 +120,18 @@ def read_sj_listen(path: Path) -> SjListen:
         for needed in ("name", "nsa"):
             if needed not in columns:
                 raise ListenError(f"Spalte {needed.capitalize()} fehlt im Sheet {JUMPER_SHEET}.")
+        fis_column = columns.get("fis_code")
         for row in rows:
             jumper_id = row[0]
             if jumper_id:
                 key = (_key(row[columns["name"]]), _key(row[columns["nsa"]]))
                 listen.jumper_ids[key] = str(jumper_id).strip()
+                listen.jumpers.append(Jumper(
+                    str(jumper_id).strip(),
+                    str(row[columns["name"]] or ""),
+                    str(row[columns["nsa"]] or ""),
+                    row[fis_column] if fis_column is not None else None,
+                ))
 
         columns, rows = _table(workbook, HILL_SHEET, "SchanzenID")
         dgw_column = columns.get(_key(DGW_HEADER))
@@ -119,6 +140,7 @@ def read_sj_listen(path: Path) -> SjListen:
         for row in rows:
             if row and row[0]:
                 listen.hill_dgw[_key(row[0])] = row[dgw_column]
+                listen.hills[_key(row[0])] = str(row[0])
         return listen
     finally:
         workbook.close()

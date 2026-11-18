@@ -206,6 +206,21 @@ Statistics
         self.assertEqual(values["Footer Codex"], "281")
 
 
+class SponsorTitleTests(unittest.TestCase):
+    def test_sponsor_before_fis_is_not_part_of_the_title(self):
+        values = extract_data_from_text(
+            "VIESSMANN FIS SKI JUMPING WORLD CUP\n"
+            "12th World Cup Competition   FRI 19 DEC 2025\n"
+            "Engelberg (SUI)   Start Time Trial 11:00\n"
+            "HILL SIZE HS / (95%)   140m (133m)\n",
+            "2026JP3096RLQ.pdf",
+        )
+        self.assertEqual(values["Titel"], "FIS SKI JUMPING WORLD CUP")
+        self.assertEqual(values["Typ"], "WORLD CUP")
+        self.assertEqual(values["Hill Size"], 140)
+        self.assertEqual(values["Place"], "Engelberg (SUI)")
+
+
 class WorkbookTests(unittest.TestCase):
     def setUp(self):
         results_patcher = patch("pdf_to_xlsx.pdf2xlsx.extract_results", return_value=[])
