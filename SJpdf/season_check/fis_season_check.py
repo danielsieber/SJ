@@ -115,14 +115,20 @@ YEAR_FILL = PatternFill(fill_type="solid", fgColor="FFFFEB9C")  # light yellow
 class Fetcher:
     """Download with cache and the FIS request delay (only for real requests)."""
 
-    def __init__(self, cache_directory: Path = CACHE_DIRECTORY, log: Callable[[str], None] = print):
+    def __init__(
+        self,
+        cache_directory: Path = CACHE_DIRECTORY,
+        log: Callable[[str], None] = print,
+        use_cache: bool = True,
+    ):
         self.cache_directory = cache_directory
         self.log = log
+        self.use_cache = use_cache  # False: always read fresh (pages that still change)
         self._last_request = 0.0
 
     def get(self, url: str) -> bytes:
         cache_file = self.cache_directory / hashlib.sha1(url.encode()).hexdigest()
-        if cache_file.is_file():
+        if self.use_cache and cache_file.is_file():
             return cache_file.read_bytes()
         wait = REQUEST_DELAY_SECONDS - (time.monotonic() - self._last_request)
         if wait > 0:
