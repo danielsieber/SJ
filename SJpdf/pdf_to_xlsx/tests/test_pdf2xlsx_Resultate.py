@@ -103,6 +103,9 @@ class RankTests(unittest.TestCase):
             )
         ]
         _validate(state, "Men Individual KO Large Hill\nK-POINT 125m\nMETER VALUE 1.8\n")
+        # Grand Prix 2025: not qualified for the final round, ranked apart too.
+        _validate(state, "Men Large Hill Individual\nK-POINT 125m\nMETER VALUE 1.8\n")
+        del state.rows[2]["Status"]
         with self.assertRaises(ResultsParseError):
             _validate(state, "Men Large Hill Individual\nK-POINT 125m\nMETER VALUE 1.8\n")
 
