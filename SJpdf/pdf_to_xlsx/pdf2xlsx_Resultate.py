@@ -159,7 +159,7 @@ END_HEADINGS = re.compile(
 )
 FOOTER_PATTERN = re.compile(
     r"^(?:\d{1,2} [A-Z]{3} \d{4} / |(?:Timing and )?Data Service by\b|"
-    r"(?:www\.)?fis-ski\.com\b|Report Created\b|Timing Sponsor\b|Data Provider\b|"
+    r"(?:www\.)?fis-ski\.com\b|Report Created\b|(?:Data & )?Timing Sponsor\b|(?:FIS )?Data Provider\b|Page \d+/\d+$|"
     r"data processing by\b|printed \d{1,2} [A-Z]{3} \d{4})",
     re.I,
 )
@@ -167,7 +167,9 @@ FOOTER_PATTERN = re.compile(
 # lists, explanations of disqualification rules.
 PREQUALIFIED = "Prequalified"
 PREQUALIFIED_PATTERN = re.compile(r"^Prequalified$", re.I)  # qualification until 2016: no rank
-NO_ROW_PATTERN = re.compile(r"^(?:Women|Men|Mixed|-{3,}|Prequalified)$|^SCE\s?\d[\d.]*\s*:", re.I)
+NO_ROW_PATTERN = re.compile(
+    r"^(?:Women|Men|Mixed|-{3,}|Prequalified|Reason for disqualification:?)$|^SCE\s?\d[\d.]*\s*:", re.I
+)
 NOT_QUALIFIED_PATTERN = re.compile(r"^Not Qualified\b", re.I)
 RANK_PATTERN = re.compile(r"^=?(\d+)\.$")
 RANK_VALUE_PATTERN = re.compile(r"^=?(\d+)\.?$")
@@ -286,6 +288,28 @@ def _page_spans(page: pymupdf.Page) -> list[Span]:
         if key not in unique or span.bold:
             unique[key] = span
     return list(unique.values())
+
+
+HEADER_WORDS = {"[KM/H]", "[M]", "POINTS", "GATE", "[M/S]", "TOTAL", "RANK"}
+
+
+def _split_labels(spans: list[Span]) -> list[Span]:
+    """Header labels printed as one text ('[m/s] Points', 'Gate Points',
+    EYOF 2023, Universiade 2017): one span per label, placed by its letters."""
+    result = []
+    for span in spans:
+        words = span.text.split()
+        if len(words) < 2 or not all(word.upper() in HEADER_WORDS for word in words):
+            result.append(span)
+            continue
+        width = (span.x1 - span.x0) / max(len(span.text), 1)
+        position = 0
+        for word in words:
+            start = span.text.index(word, position)
+            position = start + len(word)
+            result.append(Span(word, span.x0 + start * width, span.x0 + position * width,
+                               span.y0, span.y1, span.bold))
+    return result
 
 
 def _legacy_labels(spans: list[Span]) -> list[Span]:
@@ -600,11 +624,18 @@ def _row_cells(
     next one starts.
     """
     tops: list[tuple[float, float]] = []
-    for x, top, bottom in _vertical_segments(page):
-        if table.left - 16 <= x <= table.left + (30 if team else 1) and table.header_y + 2 < top < y_end:
-            # Team jumper without jump (DNS): a row of one line only.
-            if bottom - top > (10 if x <= table.left + 1 else 6):
-                tops.append((top, min(bottom, y_end)))
+    segments = [
+        (x, top, bottom) for x, top, bottom in _vertical_segments(page)
+        if table.left - 16 <= x <= table.left + (30 if team else 1) and table.header_y + 2 < top < y_end
+    ]
+    # Rows are more than 10 high; in small print (YOG 2020) the rows are 9.4.
+    heights = sorted(bottom - top for x, top, bottom in segments if x <= table.left + 1)
+    # (Trial rounds: half rows of 9.9 between rows of 19.8 are no rows.)
+    row_height = 8 if heights and heights[len(heights) // 2] < 9.6 else 10
+    for x, top, bottom in segments:
+        # Team jumper without jump (DNS): a row of one line only.
+        if bottom - top > (row_height if x <= table.left + 1 else 6):
+            tops.append((top, min(bottom, y_end)))
     tops.sort()
     cells: list[tuple[float, float]] = []
     for top, bottom in tops:
@@ -963,7 +994,7 @@ def _section_rows(
 
 
 def _parse_page(page: pymupdf.Page, page_number: int, state: _State) -> None:
-    spans = _legacy_labels(_page_spans(page))
+    spans = _legacy_labels(_split_labels(_page_spans(page)))
     tables = _find_tables(spans, page.rect.width, state, page_number)
     # Pages without any bold print (embedded fonts): headings are plain text.
     plain = not any(s.bold for s in spans)
@@ -1059,6 +1090,27 @@ def _hill_values(text: str) -> tuple[float | None, float | None]:
     )
 
 
+def _fit_hill(rows: list[dict[str, Any]]) -> tuple[float, float] | None:
+    """(K-point, meter value) from distances and distance points when the PDF
+    does not print them (Ruhpolding: one hill per group, '40.0 m Schanze').
+    All jumps of the rows must fit 60 + (distance - K) * meter value."""
+    pairs = [
+        (row[f"Distance {number}"], row[f"Distance Points {number}"])
+        for row in rows for number in range(1, MAX_ROUNDS + 1)
+        if row.get(f"Distance {number}") is not None and row.get(f"Distance Points {number}") is not None
+    ]
+    if len({distance for distance, _ in pairs}) < 2:
+        return None
+    (low, low_points), (high, high_points) = min(pairs), max(pairs)
+    meter_value = round((high_points - low_points) / (high - low), 1)
+    if meter_value <= 0:
+        return None
+    k_point = round((high - (high_points - 60.0) / meter_value) * 2) / 2
+    if all(abs(60.0 + (distance - k_point) * meter_value - points) <= TOLERANCE for distance, points in pairs):
+        return k_point, meter_value
+    return None
+
+
 def _check_ranks(
     rows: list[dict[str, Any]], value_key: str, rank_key: str, errors: list[str], dense: bool = False
 ) -> None:
@@ -1087,17 +1139,25 @@ def _validate(state: _State, text: str) -> None:
     if not rows:
         errors.append("no athletes found")
     k_point, meter_value = _hill_values(text)
-    if k_point is None or meter_value is None:
+    hill_of: dict[int, tuple[float, float]] = {}  # row -> (K-point, meter value) found from its group
+    if (k_point is None or meter_value is None) and rows:
+        for group in list(state.rank_groups.values()) or [rows]:
+            fitted = _fit_hill(group)
+            if fitted is None:
+                break
+            hill_of.update((id(row), fitted) for row in group)
+    if (k_point is None or meter_value is None) and not (rows and len(hill_of) == len(rows)):
         errors.append("K-point or meter value not found")
-    base = 120.0 if (k_point or 0) >= 170 else 60.0
     if "competition" in state.layouts:
         for row in rows:
+            row_k, row_meter = hill_of.get(id(row), (k_point, meter_value))
+            base = 120.0 if (row_k or 0) >= 170 else 60.0
             for number in range(1, MAX_ROUNDS + 1):
                 distance = row.get(f"Distance {number}")
                 distance_points = row.get(f"Distance Points {number}")
-                if distance is None or distance_points is None or k_point is None or meter_value is None:
+                if distance is None or distance_points is None or row_k is None or row_meter is None:
                     continue
-                calculated = base + (distance - k_point) * meter_value
+                calculated = base + (distance - row_k) * row_meter
                 if abs(calculated - distance_points) > TOLERANCE:
                     errors.append(f"{row['Name']}: distance points round {number}")
         for row in rows:
@@ -1153,7 +1213,8 @@ def _validate(state: _State, text: str) -> None:
                     errors.append(f"{team['Name']}: no jumpers")
                 elif team.get("Total") is not None and abs(sum(points) - team["Total"]) > TOLERANCE * len(points):
                     errors.append(f"{team['Name']}: total {sum(points):.1f} != {team['Total']}")
-            _check_ranks(teams, "Total", "Rank", errors)
+            for group in list(state.rank_groups.values()) or [rows]:
+                _check_ranks([row for row in group if row.get(TEAM_KEY)], "Total", "Rank", errors)
         else:
             # KO: winners and lucky losers ranked apart from the other losers.
             groups = (
@@ -1177,7 +1238,7 @@ def _validate(state: _State, text: str) -> None:
                     continue
                 calculated = max(
                     0.0,
-                    base
+                    (120.0 if k_point >= 170 else 60.0)
                     + (distance - k_point) * meter_value
                     + (row.get(f"Gate Points {number}") or 0.0)
                     + (row.get(f"Wind Points {number}") or 0.0),
@@ -1190,8 +1251,12 @@ def _validate(state: _State, text: str) -> None:
                                             ("Round Total", "Round Rank")):
                     _check_ranks(group, f"{value_key} {number}", f"{rank_key} {number}", errors,
                                  dense=state.dense_ranks)
-    bibs = [row["Bib"] for row in rows + state.section_rows if row.get("Bib") is not None]
-    duplicates = sorted({bib for bib in bibs if bibs.count(bib) > 1})
+    # Groups ranked apart may start their bibs again at 1 (ladies, then men).
+    duplicates = []
+    for group in list(state.rank_groups.values()) or [rows + state.section_rows]:
+        bibs = [row["Bib"] for row in group if row.get("Bib") is not None]
+        duplicates.extend(bib for bib in bibs if bibs.count(bib) > 1)
+    duplicates = sorted(set(duplicates), key=str)
     if duplicates:
         errors.append(f"duplicate bibs {duplicates}")
     if errors:
@@ -1227,6 +1292,11 @@ WINSPRINGEN_LABELS = {
     "LUKE": "Gate",
     "G-N.": "Round Total",
     "T-N.": "Total",
+    # Ruhpolding until 2019: labels written out.
+    "W-NOTE": "Distance Points",
+    "H-NOTE": "Judge Points",
+    "G-NOTE": "Round Total",
+    "T-NOTE": "Total",
     "PP": "Cup Points",  # cup points of the place: not read
 }
 WINSPRINGEN_FOLLOWERS = {  # 'pts' / 'Rg' take the meaning of the column before
@@ -1237,16 +1307,18 @@ WINSPRINGEN_FOLLOWERS = {  # 'pts' / 'Rg' take the meaning of the column before
 }
 WINSPRINGEN_IDENTITY = ("Rank", "Bib", "FIS Code", "Name", "Year", "Association", "Club")
 WINSPRINGEN_END = re.compile(
-    r"^(?:From the referee|Statisti[ck]s?\b|Jury\b|WinSpringen\b|Erstellt am\b|Seite \d|"
+    r"^(?:From the referee|Aus dem Kampfrichterprotokoll|Statisti[ck]s?\b|Jury\b|WinSpringen\b|Erstellt am\b|Seite \d|"
     r"For the correctness|Weather\b|Wetter\b)",
     re.I,
 )
 WINSPRINGEN_SECTIONS = (
-    (re.compile(r"^(?:Did not start|Nicht gestartet)\b", re.I), "DNS"),
+    (re.compile(r"^(?:Did not start|Nicht gestartet|Nicht am Start)\b", re.I), "DNS"),
     (re.compile(r"^(?:Disqualified|Disqualifiziert)\b", re.I), "DSQ"),
     (re.compile(r"^(?:Did not finish|Nicht beendet)\b", re.I), "DNF"),
 )
-WINSPRINGEN_GROUPS = re.compile(r"^(?:Men|Women|Ladies|Mixed|Youth|Herren|Damen)$", re.I)
+WINSPRINGEN_GROUPS = re.compile(
+    r"^(?:Men|Women|Ladies|Mixed|Youth|Herren|Damen|Schüler(?:innen)?\b.*)$", re.I  # 'Schüler S12 m'
+)
 
 
 @dataclass
@@ -1394,6 +1466,8 @@ def _winspringen_document(document: pymupdf.Document, state: _State) -> None:
             if not blocks:
                 raise _fail(state, page_layout.number, f"values outside athlete rows: {[s.text for s in line]}.")
             blocks[-1][1].append((page_layout, line))
+        elif len(line) == 1 and line[0].text.upper() in WINSPRINGEN_LABELS:
+            continue  # second header line of a later page ('Vbd')
         elif len(line) == 1 and (line[0].bold or re.search(r"\bSchanze\b", line[0].text)):
             group = line[0].text  # 'Boys, 64.0 m Schanze': ranked apart
         elif blocks:
@@ -1415,6 +1489,8 @@ def _winspringen_document(document: pymupdf.Document, state: _State) -> None:
                     if number is None:
                         number = line_index + 1  # competition: one line per round
                     _winspringen_value(row, column.field, number, span.text, state, page_number)
+                elif field_name == "FIS Code" and span.text.casefold() in ("ohne", "-"):
+                    continue  # athlete without FIS code (Ruhpolding)
                 elif field_name in ("Rank", "Bib", "FIS Code") and line_index == 0:
                     match = RANK_VALUE_PATTERN.match(span.text)
                     if not match:
@@ -1440,6 +1516,269 @@ def _winspringen_document(document: pymupdf.Document, state: _State) -> None:
             row["Total"] = row.get("Round Total 1")  # after round 1: no total column
         state.rows.append(row)
         state.rank_groups.setdefault(group, []).append(row)
+
+
+# --- Kilipa (EYOF Lahti 2022) -------------------------------------------------
+# Results of the organiser (www.kilipa.com): nation written out below the name
+# ('Slovenia'), both rounds on two lines, no wind; rounds not jumped as 0.0.
+KILIPA_PATTERN = re.compile(r"\bKilipa\b|www\.kilipa\.com", re.I)
+KILIPA_LABELS = {
+    "M": "Distance", "DIST [M]": "Distance",
+    "KM/H": "Speed", "SPEED [KM/H]": "Speed",
+    "DP": "Distance Points", "DIST. POINTS": "Distance Points",
+    "A": "A", "B": "B", "C": "C", "D": "D", "E": "E",
+    "JP": "Judge Points", "JUDGE POINTS": "Judge Points",
+    "GATE": "Gate", "GPTS": "Gate Points",
+    "PTS": "Round Total", "ROUND POINTS": "Round Total",
+    "RANK": "Round Rank", "TOTAL": "Total", "BEHIND": None,
+}
+COUNTRY_CODES = {
+    "andorra": "AND", "argentina": "ARG", "armenia": "ARM", "australia": "AUS", "austria": "AUT",
+    "belarus": "BLR", "belgium": "BEL", "bosnia and herzegovina": "BIH", "bulgaria": "BUL",
+    "canada": "CAN", "china": "CHN", "croatia": "CRO", "czech republic": "CZE", "czechia": "CZE",
+    "denmark": "DEN", "estonia": "EST", "finland": "FIN", "france": "FRA", "georgia": "GEO",
+    "germany": "GER", "great britain": "GBR", "greece": "GRE", "hungary": "HUN", "iceland": "ISL",
+    "israel": "ISR", "italy": "ITA", "japan": "JPN", "kazakhstan": "KAZ", "korea": "KOR",
+    "kyrgyzstan": "KGZ", "latvia": "LAT", "liechtenstein": "LIE", "lithuania": "LTU",
+    "montenegro": "MNE", "netherlands": "NED", "north macedonia": "MKD", "norway": "NOR",
+    "poland": "POL", "romania": "ROU", "russia": "RUS", "serbia": "SRB", "slovakia": "SVK",
+    "slovenia": "SLO", "spain": "ESP", "sweden": "SWE", "switzerland": "SUI", "turkey": "TUR",
+    "turkiye": "TUR", "ukraine": "UKR", "united states": "USA", "usa": "USA",
+}
+
+
+def _kilipa_columns(spans: list[Span], state: _State, page: int) -> tuple[list[_WinColumn], Span, Span] | None:
+    """Columns by the right edge of their (one or two line) labels; the
+    first 'Rank' and the 'Name' / 'Name/Club' label give the identity part."""
+    ranks = sorted((s for s in spans if s.text == "Rank"), key=lambda s: (s.y, s.x0))
+    if not ranks:
+        return None
+    rank = ranks[0]
+    name = next((s for s in spans if s.text in ("Name/Club", "Name") and abs(s.y - rank.y) < 8), None)
+    if name is None:
+        return None
+    header = [s for s in spans if abs(s.y - rank.y) < 8 and s.x0 > name.x1 and s.text not in ("Name", "Team")]
+    groups: list[list[Span]] = []
+    for span in sorted(header, key=lambda s: s.x1):
+        if groups and abs(groups[-1][-1].x1 - span.x1) < 3:
+            groups[-1].append(span)
+        else:
+            groups.append([span])
+    columns = []
+    for group in groups:
+        label = " ".join(s.text for s in sorted(group, key=lambda s: s.y)).upper()
+        if label not in KILIPA_LABELS:
+            raise _fail(state, page, f"unknown Kilipa column '{label}'.")
+        if KILIPA_LABELS[label] is not None:
+            columns.append(_WinColumn(KILIPA_LABELS[label], min(s.x0 for s in group), max(s.x1 for s in group)))
+    return columns, rank, name
+
+
+def _kilipa_document(document: pymupdf.Document, state: _State) -> None:
+    columns: list[_WinColumn] | None = None
+    rank_label = name_label = None
+    current: dict[str, Any] | None = None
+    round_number = 0
+    team: dict[str, Any] | None = None
+    for page_number, page in enumerate(document, start=1):
+        spans = _page_spans(page)
+        found = _kilipa_columns(spans, state, page_number)
+        if found is not None:
+            columns, rank_label, name_label = found
+            top = max(s.y for s in spans if abs(s.y - rank_label.y) < 8) + 2
+        elif columns is None:
+            continue
+        else:
+            # Page without header: from the first value in the columns (below the title).
+            low = min(c.x0 for c in columns) - 8
+            top = min((s.y for s in spans if s.x0 >= low and NUMBER_PATTERN.match(s.text)),
+                      default=page.rect.height) - 4
+        end = min((s.y for s in spans if s.y > top and re.match(r"^(?:Did not start|Weather|Temperature|Printed)\b", s.text)),
+                  default=page.rect.height)
+        data_low = min(c.x0 for c in columns) - 8
+        for line in _lines([s for s in spans if top < s.y < end]):
+            line.sort(key=lambda s: s.x0)
+            # Values: numbers right aligned in a column; the rest is rank, bib,
+            # name or nation (a long name may reach into the values).
+            values = [
+                s for s in line
+                if s.x0 >= data_low - 12 and re.fullmatch(r"-?\d+(?:\.\d*)?", s.text)  # '18.': round rank
+                and min(abs(c.x1 - s.x1) for c in columns) <= 8
+            ]
+            left = [s for s in line if s not in values]
+            texts = [s.text for s in line]
+            fields = [min(columns, key=lambda c: abs(c.x1 - s.x1)) for s in values]
+            if not left and values and all(f.field in ("Round Total", "Round Rank") for f in fields):
+                continue  # team: points and rank of the team per round
+            bib = next((s for s in left if re.fullmatch(r"\d+(?:-\d+)?", s.text) and s.x1 < name_label.x0 + 8), None)
+            text = " ".join(s.text for s in left if s.x0 >= name_label.x0 - 6)
+            rank = next((s for s in left if RANK_PATTERN.match(s.text) and s.x1 <= rank_label.x1 + 4), None)
+            if bib is not None and "-" not in bib.text and " - " in text:
+                # Team: 'SLO - SLOVENIA', total of the team.
+                team = {"Bib": int(bib.text), "Name": text, "NSA": text[:3], TEAM_KEY: True}
+                if rank is not None:
+                    team["Rank"] = int(RANK_PATTERN.match(rank.text).group(1))
+                for span, column in zip(values, fields):
+                    if column.field == "Total":
+                        _winspringen_value(team, "Total", 1, span.text, state, page_number)
+                state.rows.append(team)
+                current = None
+                continue
+            if bib is not None and text:
+                current = {"Bib": bib.text if "-" in bib.text else int(bib.text), "Name": text}
+                if rank is not None:
+                    current["Rank"] = int(RANK_PATTERN.match(rank.text).group(1))
+                if team is not None and "-" in bib.text:
+                    current["NSA"] = team["NSA"]
+                state.rows.append(current)
+                round_number = 1
+            elif current is not None and (values or text):
+                round_number += 1
+                if text:
+                    nsa = COUNTRY_CODES.get(text.casefold())
+                    if nsa is None:
+                        raise _fail(state, page_number, f"{current['Name']}: unknown nation '{text}'.")
+                    current["NSA"] = nsa
+            elif not values:
+                continue
+            else:
+                raise _fail(state, page_number, f"values outside athlete rows: {texts}.")
+            jump: dict[str, Any] = {}
+            for span, column in zip(values, fields):
+                if abs(column.x1 - span.x1) > 8:
+                    raise _fail(state, page_number, f"value '{span.text}' outside all columns.")
+                if column.field == "Total":
+                    if round_number == 1 and not isinstance(current["Bib"], str):
+                        _winspringen_value(current, "Total", 1, span.text, state, page_number)
+                    continue
+                _winspringen_value(jump, column.field, round_number, span.text, state, page_number)
+            if not jump.get(f"Distance {round_number}"):
+                continue  # round not jumped: printed as 0.0
+            marks = [jump.get(f"{judge} {round_number}") for judge in "ABCDE"]
+            if all(not mark for mark in marks):
+                # Training and trial round: no judges (marks 0.0).
+                for judge in "ABCDE":
+                    jump.pop(f"{judge} {round_number}", None)
+                jump.setdefault(f"Judge Points {round_number}", 0.0)
+            current.update(jump)
+        _kilipa_sections(spans, end, state)
+    state.layouts.add("competition")
+    state.blank_is_zero = True
+    state.wind_column = False
+
+
+def _kilipa_sections(spans: list[Span], start: float, state: _State) -> None:
+    """'Did not start:' bib, 'NAME First, Nation (SJ)'; '(2nd round)' only
+    skipped the second trial round and is ranked above."""
+    for line in _lines([s for s in spans if s.y > start]):
+        line.sort(key=lambda s: s.x0)
+        texts = [s.text for s in line]
+        if not texts or not BIB_PATTERN.match(texts[0]) or len(texts) < 2:
+            continue
+        if any("2nd round" in text for text in texts):
+            continue
+        name, _, nation = texts[1].rpartition(",")
+        row: dict[str, Any] = {"Bib": int(texts[0]), "Status": "DNS", "Name": name.strip() or texts[1]}
+        if COUNTRY_CODES.get(nation.strip().casefold()):
+            row["NSA"] = COUNTRY_CODES[nation.strip().casefold()]
+        state.section_rows.append(row)
+
+
+def _is_winspringen_team(document: pymupdf.Document) -> bool:
+    """WinSpringen team list (Ruhpolding CHI): header 'Rang StNr Team ... Total',
+    second header line 'Namen km/h Weite ...'."""
+    spans = _page_spans(document[0])
+    return any(s.text.upper() == "TEAM" for s in spans) and any(s.text.upper() == "NAMEN" for s in spans)
+
+
+def _winspringen_team_document(document: pymupdf.Document, state: _State) -> None:
+    """Team list: team line (rank, bib, team, total), then per jumper a line
+    with name and round 1 and a line with round 2 (no wind, no gate points)."""
+    columns: list[_WinColumn] | None = None
+    total_x = 0.0
+    name_x = 0.0
+    teams: list[dict[str, Any]] = []
+    members: list[dict[str, Any]] = []
+    member: dict[str, Any] | None = None
+    group = ""
+    for page_number, page in enumerate(document, start=1):
+        spans = _page_spans(page)
+        names_label = next((s for s in spans if s.text.upper() == "NAMEN"), None)
+        if names_label is not None:
+            header = sorted((s for s in spans if abs(s.y - names_label.y) < 3), key=lambda s: s.x0)
+            columns = []
+            for span in header:
+                label = span.text.upper()
+                if label in ("NAMEN", "FIS-CODE", "STNR-P", "STNR"):
+                    continue
+                field_name = WINSPRINGEN_LABELS.get(label)
+                if field_name is None:
+                    raise _fail(state, page_number, f"unknown WinSpringen team column '{span.text}'.")
+                columns.append(_WinColumn(field_name, span.x0, span.x1))
+            total = next((s for s in spans if s.text.upper() == "TOTAL" and names_label.y - 20 < s.y < names_label.y),
+                         None)
+            if total is None or not columns:
+                raise _fail(state, page_number, "WinSpringen team header without Total.")
+            total_x = total.x
+            name_x = names_label.x0
+            top = names_label.y + 3
+        elif columns is None:
+            continue
+        else:
+            top = 0.0
+        data_low = min(c.x0 for c in columns) - 8
+        end = min((s.y for s in spans if s.y > top and WINSPRINGEN_END.match(s.text)), default=page.rect.height)
+        for line in _lines([s for s in spans if top < s.y < end]):
+            line.sort(key=lambda s: s.x0)
+            texts = [s.text for s in line]
+            values = [s for s in line if s.x >= data_low]
+            left = [s for s in line if s.x < data_low]
+            if not values and len(line) == 1:
+                group = line[0].text  # 'Schüler Mixed, 40.0 m Schanze': ranked apart
+                continue
+            if (len(left) >= 3 and RANK_VALUE_PATTERN.match(left[0].text) and BIB_PATTERN.match(left[1].text)
+                    and left[0].x0 < name_x - 5):
+                # Team line: rank, bib, team name; total at the right.
+                total_span = min(values, key=lambda s: abs(s.x - total_x), default=None)
+                if total_span is None or abs(total_span.x - total_x) > 25:
+                    raise _fail(state, page_number, f"team without total {texts}.")
+                name = " ".join(s.text for s in left[2:] if not NSA_PATTERN.match(s.text) or len(left) == 3)
+                team = {"Rank": int(RANK_VALUE_PATTERN.match(left[0].text).group(1)),
+                        "Bib": int(left[1].text), "Name": name, TEAM_KEY: True}
+                if NSA_PATTERN.match(name[:3]) and not re.search(r"[/-]", name):
+                    team["NSA"] = name[:3]  # 'SUI', 'AUT I': one nation
+                _winspringen_value(team, "Total", 1, total_span.text, state, page_number)
+                teams.append(team)
+                state.rows.append(team)
+                state.rank_groups.setdefault(group, []).append(team)
+                member = None
+                continue
+            athlete = [s for s in left if re.search(r"[^\W\d_]", s.text) and not re.fullmatch(r"\d+\s*-\s*\d+", s.text)]
+            if athlete:
+                if not teams:
+                    raise _fail(state, page_number, f"jumper before the first team {texts}.")
+                team = teams[-1]
+                number = sum(1 for row in members if row["Bib"].startswith(f"{team['Bib']}-")) + 1
+                member = {"Bib": f"{team['Bib']}-{number}", "Name": " ".join(s.text for s in athlete)}
+                if team.get("NSA"):
+                    member["NSA"] = team["NSA"]
+                members.append(member)
+                state.rows.append(member)
+                state.rank_groups.setdefault(group, []).append(member)
+                round_number = 1
+            elif values and member is not None and not left:
+                round_number = 2
+            else:
+                raise _fail(state, page_number, f"values outside athlete rows: {texts}.")
+            for span in values:
+                column = min(columns, key=lambda c: abs(c.x - span.x))
+                if abs(column.x - span.x) > 14:
+                    raise _fail(state, page_number, f"value '{span.text}' outside all columns.")
+                _winspringen_value(member, column.field, round_number, span.text, state, page_number)
+        _winspringen_sections(spans, state, page_number)
+    state.layouts.add("competition")
+    state.blank_is_zero = True
+    state.wind_column = False
 
 
 def _winspringen_sections(spans: list[Span], state: _State, page: int) -> None:
@@ -1480,17 +1819,42 @@ def _winspringen_sections(spans: list[Span], state: _State, page: int) -> None:
         state.section_rows.append(row)
 
 
+PAGE_GENDER_PATTERN = re.compile(r"\b(LADIES|WOMEN|MEN)\b")
+
+
+def _page_gender(page: pymupdf.Page) -> str | None:
+    """'SKI JUMPING LADIES' / 'SKI JUMPING MEN' in the head of a page."""
+    head = "\n".join(page.get_text(sort=True).splitlines()[:6])
+    match = PAGE_GENDER_PATTERN.search(head)
+    if match is None:
+        return None
+    return "M" if match.group(1) == "MEN" else "W"
+
+
 def extract_results(pdf_path: Path) -> list[dict[str, Any]]:
     """Return one dict per athlete (keys from RESULT_COLUMNS) for a PDF."""
     state = _State(pdf_path.name)
     try:
         with pymupdf.open(pdf_path) as document:
             text = "\n".join(page.get_text() for page in document)
-            if WINSPRINGEN_PATTERN.search(text):
+            if KILIPA_PATTERN.search(text):
+                _kilipa_document(document, state)
+            elif WINSPRINGEN_PATTERN.search(text) and _is_winspringen_team(document):
+                _winspringen_team_document(document, state)
+            elif WINSPRINGEN_PATTERN.search(text):
                 _winspringen_document(document, state)
             else:
+                page_groups: dict[str, list[dict[str, Any]]] = {}
                 for page_number, page in enumerate(document, start=1):
+                    before = len(state.rows)
                     _parse_page(page, page_number, state)
+                    gender = _page_gender(page)
+                    if gender is not None:
+                        page_groups.setdefault(gender, []).extend(state.rows[before:])
+                # Mixed training (WSC Seefeld 2019): pages of the ladies, then of
+                # the men, each ranked apart.
+                if len(page_groups) > 1 and not state.rank_groups:
+                    state.rank_groups.update(page_groups)
     except (pymupdf.FileDataError, pymupdf.EmptyFileError) as error:
         raise ResultsParseError(f"{pdf_path.name}: cannot read PDF: {error}") from error
     # Ranked after round 1, then DSQ/DNS in round 2: listed in both places.

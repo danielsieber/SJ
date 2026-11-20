@@ -108,5 +108,12 @@ python archive_xlsx.py --season 2024-2026
 - `xlsx_log.csv` im Archiv protokolliert pro Ordner Status, fehlende
   JumperID und SchanzenID, Zahl der Warnungen und die Warnungen selbst.
 
-Tests: `python -m unittest test_fis_pdf_archive.py test_archive_xlsx.py`
-(aus diesem Ordner).
+## Übersicht aller Ordner
+
+`archive_overview.py` (Doppelklick auf `start_archive_overview.bat`) schreibt
+`C:\downloaded_FIS_pdf\Archiv_Uebersicht.xlsx`: pro Ordner Datum, Typ,
+Gender, Place, HS (aus dem Ordnernamen), Zahl der PDFs der Rangliste, davon
+verarbeitet und nicht verarbeitet (aus `Notes` der xlsx im Ordner), Status,
+Link auf den Ordner und je nicht verarbeitetem PDF ein Link zum Öffnen.
+
+Tests: `python -m unittest` (aus diesem Ordner).

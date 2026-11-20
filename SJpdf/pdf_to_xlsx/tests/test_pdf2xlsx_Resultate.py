@@ -201,3 +201,29 @@ class LegacyLayoutTests(unittest.TestCase):
 
         spans = [Span("[km/h]", 200, 220, 100, 108, True), Span("Speed", 200, 220, 90, 98, True)]
         self.assertIs(_legacy_labels(spans), spans)
+
+
+class HillAndLabelTests(unittest.TestCase):
+    def test_hill_from_distances_when_not_printed(self):
+        # Ruhpolding: '40.0 m Schanze', 2.4 points per metre, no K-point in the PDF.
+        from pdf_to_xlsx.pdf2xlsx_Resultate import _fit_hill
+
+        rows = [{"Distance 1": 38.5, "Distance Points 1": 56.4, "Distance 2": 41.0, "Distance Points 2": 62.4},
+                {"Distance 1": 35.5, "Distance Points 1": 49.2}]
+        self.assertEqual(_fit_hill(rows), (40.0, 2.4))
+        rows[1]["Distance Points 1"] = 50.0  # does not fit
+        self.assertIsNone(_fit_hill(rows))
+
+    def test_labels_printed_as_one_text_are_split(self):
+        from pdf_to_xlsx.pdf2xlsx_Resultate import Span, _split_labels
+
+        spans = _split_labels([Span("[m/s] Points", 100, 160, 10, 18, True), Span("Judges Marks", 0, 40, 10, 18, True)])
+        self.assertEqual([s.text for s in spans], ["[m/s]", "Points", "Judges Marks"])
+        self.assertLess(spans[0].x1, spans[1].x0)
+
+    def test_footer_texts_are_no_values(self):
+        from pdf_to_xlsx.pdf2xlsx_Resultate import FOOTER_PATTERN, NO_ROW_PATTERN
+
+        for text in ("FIS Data Provider", "Data & Timing Sponsor", "Page 1/2"):
+            self.assertTrue(FOOTER_PATTERN.match(text), text)
+        self.assertTrue(NO_ROW_PATTERN.match("Reason for disqualification:"))
