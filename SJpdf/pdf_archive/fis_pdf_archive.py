@@ -8,10 +8,15 @@ without EventNr and codex, with the date of its last competition:
     C:\\downloaded_FIS_pdf\\2027-03-14 COCM Zakopane LH
 
 Each folder holds every PDF of all its competitions (start lists, results,
-program, ...) under the FIS file name, plus pdf_links.csv (PDF name and FIS
-link, read by pdf2xlsx). A PDF whose link is already in pdf_links.csv is not
-downloaded again, so an interrupted run continues where it stopped and a
-later run of the current season only adds new PDFs.
+program, ...) under the FIS file name, plus pdf_links.csv and pdf_links.xlsx
+(PDF name and FIS link, see pdf_links.py). An event with competitions on two
+hills is split into one folder per hill size ('... LH HS109', see
+split_hills.py). archive_xlsx.py renames the folders like their workbook
+('2017-02-04 COCM Erzurum HS109'), so an event's folder is found by the codex
+of its PDFs ('2017JP3951'); only a new event gets a folder named as above.
+A PDF whose link is in pdf_links.csv of any folder is not downloaded again,
+so an interrupted run continues where it stopped and a later run of the
+current season only adds new PDFs.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ import csv
 import re
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -30,6 +35,7 @@ from typing import Callable
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "season_check"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fis_web import (  # noqa: E402
     REQUEST_DELAY_SECONDS,
     calendar_events,
@@ -39,6 +45,8 @@ from fis_web import (  # noqa: E402
     open_url,
 )
 from fis_season_check import Fetcher, _downloader  # noqa: E402
+import pdf_links  # noqa: E402
+from split_hills import codex_of, split_by_hill_size  # noqa: E402
 from raceid_crawler.fis_raceid_crawler import (  # noqa: E402
     _competition_rows,
     _sorted,
@@ -48,7 +56,6 @@ from raceid_crawler.fis_raceid_crawler import (  # noqa: E402
 
 OUTPUT_DIRECTORY = Path(r"C:\downloaded_FIS_pdf")
 FIRST_SEASON = 2016
-LINKS_FILENAME = "pdf_links.csv"  # as written by pdf_download/FIS_pdf-download.py
 LOG_FILENAME = "archiv_log.csv"
 LOG_HEADERS = ("Zeit", "Saison", "Ordner", "Codex", "PDFs neu", "PDFs gesamt", "Meldung")
 
@@ -110,21 +117,27 @@ def season_events(season: int, fetcher: Fetcher, log: Callable[[str], None] = pr
 
 def read_links(folder: Path) -> dict[str, str]:
     """{FIS link: PDF name} of a folder."""
-    links_file = folder / LINKS_FILENAME
-    if not links_file.is_file():
-        return {}
-    with links_file.open(encoding="utf-8-sig", newline="") as handle:
-        return {row["url"]: row["pdf"] for row in csv.DictReader(handle) if row.get("url")}
+    return {row["url"]: row["pdf"] for row in pdf_links.read_rows(folder) if row["url"]}
 
 
-def _append_link(folder: Path, pdf_name: str, url: str) -> None:
-    links_file = folder / LINKS_FILENAME
-    new_file = not links_file.is_file()
-    with links_file.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        if new_file:
-            writer.writerow(["pdf", "url"])
-        writer.writerow([pdf_name, url])
+class ArchiveIndex:
+    """Folder of each FIS link and of each codex ('2017JP3951') of the archive."""
+
+    def __init__(self, directory: Path):
+        self.folder_of_link: dict[str, Path] = {}
+        self.folder_of_codex: dict[str, Path] = {}
+        if directory.is_dir():
+            for folder in sorted(directory.iterdir()):
+                if folder.is_dir():
+                    self.add_folder(folder)
+
+    def add_folder(self, folder: Path) -> None:
+        for url in read_links(folder):
+            self.folder_of_link[url] = folder
+        for pdf in folder.glob("*.pdf"):
+            codex = codex_of(pdf)
+            if codex is not None:
+                self.folder_of_codex[codex] = folder
 
 
 class PdfDownloader:
@@ -153,15 +166,22 @@ class PdfDownloader:
         return filename, content
 
 
-def archive_event(event: Event, output_directory: Path, downloader: PdfDownloader, log=print) -> tuple[Path, int, list[str]]:
-    """Download the missing PDFs of an event; return (folder, new PDFs, problems)."""
-    folder = output_directory / folder_name(event)
-    known = read_links(folder)
-    missing = [attachment for url, attachment in event.attachments.items() if url not in known]
+def archive_event(
+    event: Event, output_directory: Path, downloader: PdfDownloader, log=print,
+    index: ArchiveIndex | None = None,
+) -> tuple[Path, int, list[str]]:
+    """Download the missing PDFs of an event; return (folder, new PDFs, problems).
+
+    A PDF goes to the folder that holds its codex, else to the folder of the
+    event's other codexes, else to a new folder (folder_name)."""
+    index = index or ArchiveIndex(output_directory)
+    codexes = [f"{event.season}JP{int(codex):04d}" for codex in event.codexes]
+    found = Counter(index.folder_of_codex[codex] for codex in codexes if codex in index.folder_of_codex)
+    folder = found.most_common(1)[0][0] if found else output_directory / folder_name(event)
+    missing = [attachment for url, attachment in event.attachments.items() if url not in index.folder_of_link]
     problems = []
     added = 0
-    if missing:
-        folder.mkdir(parents=True, exist_ok=True)
+    touched: set[Path] = set()
     for attachment in missing:
         label = " ".join(attachment.label.split())
         try:
@@ -169,11 +189,23 @@ def archive_event(event: Event, output_directory: Path, downloader: PdfDownloade
         except Exception as error:  # noqa: BLE001 - report, keep going
             problems.append(f"{label}: {error}")
             continue
-        destination = _downloader._unique_path(folder, filename)
+        codex = codex_of(Path(filename))
+        target = index.folder_of_codex.get(codex, folder) if codex else folder
+        target.mkdir(parents=True, exist_ok=True)
+        destination = _downloader._unique_path(target, filename)
         destination.write_bytes(content)
-        _append_link(folder, destination.name, attachment.url)
+        pdf_links.append_row(target, destination.name, attachment.url)
+        index.folder_of_link[attachment.url] = target
+        if codex:
+            index.folder_of_codex.setdefault(codex, target)
+        touched.add(target)
         added += 1
-        log(f"  {folder.name}: {destination.name}")
+        log(f"  {target.name}: {destination.name}")
+    for target in sorted(touched):
+        for split in split_by_hill_size(target, log):
+            index.add_folder(split)
+            if not folder.is_dir():
+                folder = split
     return folder, added, problems
 
 
@@ -193,6 +225,7 @@ def archive_seasons(
     """Newest season first, so the most recent events are there first."""
     output_directory.mkdir(parents=True, exist_ok=True)
     downloader = PdfDownloader(log)
+    index = ArchiveIndex(output_directory)
     for season in range(last, first - 1, -1):
         # FIS pages of a finished season do not change: cached. Pages of the
         # current season get new PDFs: always read fresh.
@@ -202,7 +235,7 @@ def archive_seasons(
         for event in events:
             if not event.attachments:
                 continue  # no PDFs at FIS (yet)
-            folder, added, problems = archive_event(event, output_directory, downloader, log)
+            folder, added, problems = archive_event(event, output_directory, downloader, log, index)
             total_new += added
             if added or problems:
                 _log_row(output_directory, (

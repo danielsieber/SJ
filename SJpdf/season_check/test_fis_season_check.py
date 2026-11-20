@@ -166,16 +166,42 @@ class CompareTests(unittest.TestCase):
             workbook = load_workbook(path)
             sheet = workbook["Fehlende_JumperID"]
             rows = list(sheet.iter_rows(values_only=True))
-            self.assertEqual(rows[0][:7], season.JUMPER_HEADERS)
+            self.assertEqual(rows[0][:len(season.JUMPER_HEADERS)], season.JUMPER_HEADERS)
             self.assertEqual([row[0] for row in rows[1:]], ["SUI MUSTER ANNA", "SUI MUSTER ANNINA"])
             anna = rows[1]
-            self.assertEqual(anna[1:7], ("MUSTER Anna", "SUI", "F", anna[4], 9999, 2008))
-            self.assertEqual(anna[4].date(), date(2008, 5, 1))
-            self.assertIsNone(rows[2][3])  # gender unknown
-            self.assertIn("Gender unbekannt", rows[2][11])
+            # JumperID_pdf, JumperID, Name, NSA, Gender, DoB, FIS_Code, JG, Age (formula)
+            self.assertEqual(anna[:8], ("SUI MUSTER ANNA", "SUI MUSTER ANNA", "MUSTER Anna", "SUI", "F",
+                                        anna[5], 9999, 2008))
+            self.assertEqual(anna[5].date(), date(2008, 5, 1))
+            self.assertEqual(anna[8], "=YEAR(TODAY())-H2")
+            self.assertIsNone(rows[2][4])  # gender unknown
+            self.assertIn("Gender unbekannt", rows[2][13])
             self.assertEqual(workbook.sheetnames, ["Übersicht", "Fehlende_JumperID", "Prüfen", "Fehlende_SchanzenID"])
             self.assertEqual(workbook["Fehlende_SchanzenID"]["A2"].value, "Klingenthal HS66")
             workbook.close()
+
+    def test_check_rows_have_the_layout_of_the_list(self):
+        # 'Hayboeck Michael' without NSA at FIS: JumperID_pdf 'HAYBOE MICHAE',
+        # the rest from the listed jumper with the same FIS code.
+        self.listen.jumpers.append(Jumper("AUT HAYBOE MICHAE", "HAYBOECK Michael", "AUT", 5288, "M",
+                                          "AUT HAYBOE MICHAE", date(1991, 3, 5), 1991))
+        self.data.athletes["5288"] = season.Athlete("5288", "Hayboeck Michael", None, 1991, None, {"M"},
+                                                    first_competition="2015-07-31 GPM Wisla 3817")
+        result = season.compare(self.data, self.listen)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "Fehlende_JumperID.xlsx"
+            season.write_workbook(result, self.listen, 2026, self.data, path)
+            workbook = load_workbook(path)
+            rows = list(workbook["Prüfen"].iter_rows(values_only=True))
+            self.assertEqual(rows[0][:len(season.JUMPER_HEADERS)], season.JUMPER_HEADERS)
+            hayboeck = next(row for row in rows if row[1] == "AUT HAYBOE MICHAE")
+            self.assertEqual(hayboeck[:5], ("HAYBOE MICHAE", "AUT HAYBOE MICHAE", "HAYBOECK Michael", "AUT", "M"))
+            self.assertEqual((hayboeck[5].date(), hayboeck[6], hayboeck[7]), (date(1991, 3, 5), 5288, 1991))
+            self.assertEqual(hayboeck[10:13], ("Hayboeck Michael", None, "2015-07-31 GPM Wisla 3817"))
+            workbook.close()
+        # Once the row is in the list, the jumper is no longer to check.
+        self.listen.jumpers.append(Jumper("AUT HAYBOE MICHAE", "HAYBOECK Michael", "AUT", 5288, "M", "HAYBOE MICHAE"))
+        self.assertNotIn("Hayboeck Michael", [a.name for a, _ in season.compare(self.data, self.listen).check])
 
 
 if __name__ == "__main__":

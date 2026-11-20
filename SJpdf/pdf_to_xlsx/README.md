@@ -33,6 +33,16 @@ with their first title line.
   (`Boys, 64.0 m Schanze`) ranked apart, DNS/DSQ lists, empty distance or
   wind points counted as 0. Date from `15.03.2026`, `26th October 2024` or
   the print date `Erstellt am`. Team lists of WinSpringen are not supported.
+- Swiss Timing until 2023: labels `Rk`, `Speed`, `Dist`, `DP`, `JP`, `Gate`,
+  `Pts`, `m/s` in up to three header lines, round total and round rank below
+  `Round` / `Points`; small hills without gate / wind columns (training:
+  speed, distance and gate per round); `Prequalified` athletes of a
+  qualification (remark `Prequalified`, no judges and total); start lists
+  with `Name` one line above `Bib`. The gender is taken from the title lines
+  (`Ladies`, `Girls`, `Boys`, `Mixed`); when a PDF names none, from the
+  athletes found in `Liste_Springer_ID` (column `Gender`: M men, F women;
+  mixed when at least a quarter belongs to the other gender), noted in
+  `Notes`.
 - A round never counts below 0 points (negative sum printed as `0.0`).
 - Team events of Olympic Games, Youth Olympic Games and Junior World
   Championships: round lines above and below the name, name above the bib.
@@ -46,7 +56,7 @@ The workbook contains the sheet `Daten`. Each supported PDF has its own column.
 The first column contains general competition data, competition/weather
 information for up to three rounds (including length), and the last-page
 footer date, place, and codex. The competition information is written from
-row 19; footer fields follow it at rows 49-51. The event date is stored as an
+row 21; footer fields follow it at rows 51-53. The event date is stored as an
 Excel date and displayed as `yyyy-mm-dd`. Unavailable individual fields are
 left blank with a light red background. Each run removes all other sheets and
 clears every column after column A in `Daten` before writing the current
@@ -68,6 +78,12 @@ judge points, round totals, total, and all ranks). If a check fails or the
 layout is unknown, the sheet only contains the reason (red tab), and the
 converter prints a warning; no unchecked values are written. A swap of two
 judges (A-E) cannot be detected by these checks.
+An unreadable PDF does not stop the others: `Ranglisten` is built from the
+readable PDFs (warning naming the others; without a readable RL1 or start
+list the rounds are ordered as described below), and `Notes` shows below
+`Anzahl PDFs` which PDFs were read and, in red, which were not. Row 12 of `Daten`
+(`PDF readable`, below `Rangliste`) says `yes` or `no` for each PDF column. A PDF without
+text (scan) is left out of `Daten` as well.
 
 For a competition (`...RL.pdf`), the intermediate results after the first
 round (`...RL1.pdf`, same folder) are read as well; they get their own sheet
@@ -121,8 +137,10 @@ folder (`pdf2xlsx_Listen.py`; the file is only read, it may be open in Excel):
 
 - `JumperID` in `Ranglisten` is built from NSA and name by the rule of
   `Liste_Springer_ID` (NSA, first six letters of the first and of the second
-  word of the name, e.g. `ACHLEITNER Alexander` -> `AUT ACHLEI ALEXAN`) and
-  must be listed there for a jumper with the same surname (first word), so
+  word of the name, e.g. `ACHLEITNER Alexander` -> `AUT ACHLEI ALEXAN`).
+  When this ID is in the column `JumperID_pdf` (spelling of the PDFs, e.g.
+  `HAYBOE MICHAE` for `Hayboeck Michael` without NSA), the column `JumperID`
+  of that row is used (`AUT HAYBOE MICHAE`). Otherwise it must be listed there for a jumper with the same surname (first word), so
   `AUT STEINA SIMON` of STEINACHER Simon is not taken for another jumper.
   When the rule ID is not listed, name and NSA are looked up (special IDs,
   e.g. `ITA DEL LUCREZ` for DEL BIANCO Lucrezia). Otherwise the JumperID cell
@@ -130,7 +148,10 @@ folder (`pdf2xlsx_Listen.py`; the file is only read, it may be open in Excel):
   found, `Notes` says so.
 - `Pts / Gate DGW` in `Daten` (row below `TWC`) is the value
   `Pts / Gate für DGW` of the hill in `Liste_Schanzen_ID`, found by place
-  and hill size (SchanzenID `Einsiedeln HS117`). `Notes` shows whether the
+  and hill size (`Einsiedeln HS117`) in the column `SchanzenID_pdf`
+  (spelling of the PDFs, e.g. `Lake Placid/ORDA HS128`). The column
+  `SchanzenID` of that row is the name of the hill in the competition copy
+  and in `JumpID`. `Notes` shows whether the
   SchanzenID was found (a missing one is a red warning), above the JumperID
   line.
 - If `SJ-Listen.xlsm` cannot be read, there is a red warning and the

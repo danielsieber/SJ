@@ -64,11 +64,14 @@ def write_notes_sheet(
     pdfs: Sequence[tuple[Path, str | None]],
     notes: Sequence[Note],
     copy_name: str | None = None,
+    failed: Sequence[str] = (),
 ) -> None:
     """Add the Notes sheet (first) and make it the active sheet.
 
     copy_name is the file name of the competition copy (e.g.
     '2026-09-13 FCM Einsiedeln HS117.xlsx'), None when no copy was saved.
+    failed names the PDFs that could not be read (shown in red below the
+    number of PDFs; the other PDFs are in Ranglisten).
     """
     worksheet = workbook.create_sheet(SHEET_NAME, 0)
     bold = Font(bold=True)
@@ -83,6 +86,8 @@ def write_notes_sheet(
         ("Kopie gespeichert als", copy_name or "keine (siehe Meldungen)"),
         ("PDF-Ordner", "; ".join(folders) or None),
         ("Anzahl PDFs", len(pdfs)),
+        ("Gelesen", _pdf_list([path.stem for path, _url in pdfs if path.stem not in failed])),
+        ("Nicht gelesen", _pdf_list(failed)),
     )
     for row, (label, value) in enumerate(info, start=3):
         worksheet.cell(row=row, column=1, value=label).font = bold
@@ -92,6 +97,11 @@ def write_notes_sheet(
             cell.number_format = "yyyy-mm-dd hh:mm:ss"
         if label == "Kopie gespeichert als" and copy_name is None:
             cell.fill = WARNING_FILL
+        if label == "Nicht gelesen" and failed:
+            cell.fill = WARNING_FILL
+            cell.font = Font(color="FFC00000", bold=True)
+        if label in ("Gelesen", "Nicht gelesen"):
+            cell.alignment = Alignment(horizontal="left", wrap_text=True, vertical="top")
 
     row = 3 + len(info) + 1
     row = _header(worksheet, row, ("Art", "Quelle", "Meldung"))
@@ -108,6 +118,9 @@ def write_notes_sheet(
     for path, url in pdfs:
         worksheet.cell(row=row, column=1, value=path.stem)
         worksheet.cell(row=row, column=2, value=str(path))
+        if path.stem in failed:
+            for column in (1, 2):
+                worksheet.cell(row=row, column=column).fill = WARNING_FILL
         if url:
             cell = worksheet.cell(row=row, column=3, value=url)
             cell.hyperlink = url
@@ -123,6 +136,11 @@ def write_notes_sheet(
     workbook.active = workbook.sheetnames.index(SHEET_NAME)
     for sheet in workbook.worksheets:
         sheet.sheet_view.tabSelected = sheet.title == SHEET_NAME
+
+
+def _pdf_list(stems: Sequence[str]) -> str:
+    """'2: 2016JP3001RL, 2016JP3001RL1' (number and PDF names)."""
+    return f"{len(stems)}: {', '.join(stems)}" if stems else "0"
 
 
 def _header(worksheet, row: int, labels: Sequence[str]) -> int:

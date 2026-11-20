@@ -126,6 +126,23 @@ TRAINING_LINE2_LABELS = (
     ("POINTS", "Wind Points"),
     ("RANK", "Round Rank"),
 )
+# Small hills without wind / gate compensation (Swiss Timing until 2023).
+COMPETITION_SHORT_LABELS = COMPETITION_LABELS[:9]
+TRAINING_SHORT_LINE1_LABELS = TRAINING_LINE1_LABELS[:3]
+SKIPPED = "_skip"  # column without a result field (rank below the gate)
+TRAINING_SHORT_LINE2_LABELS = (("RANK", "Speed Rank"), ("RANK", "Distance Rank"), ("RANK", SKIPPED))
+
+# Swiss Timing until 2023: 'Speed', 'Dist', 'DP', ... in up to three header
+# lines; renamed to the current labels on one line before the tables are read.
+LEGACY_LABELS = {
+    "Speed": "[km/h]", "Dist": "[m]", "DP": "POINTS", "JP": "POINTS", "Gate": "GATE",
+    "Pts": "POINTS", "m/s": "[m/s]", "Points": "POINTS", "Rank": "RANK",
+    **{judge: judge for judge in "ABCDE"},
+}
+LEGACY_LEFT_LABELS = {
+    "Rk": "RANK", "Rank": "RANK", "Bib": "BIB", "Name": "NAME", "Nation": "NSA", "NSA": "NSA",
+    "Club": "Club", "Birthdate": "Birthdate",
+}
 
 STATUS_CODES = ("DNS", "DSQ", "DNF", "NPS", "DQ")
 SECTION_HEADINGS = (
@@ -136,17 +153,21 @@ SECTION_HEADINGS = (
 )
 END_HEADINGS = re.compile(
     r"^(?:Jury\b|Competition Management\b|Competition\s*/\s*Weather\b|"
-    r"Statistics\b|Legend\b|Weather Information\b)",
+    r"Statistics\b|Legend\b|Weather Information\b|"
+    r"TD$|Chief of Competition$)",  # Swiss Timing until 2023: signatures below the table
     re.I,
 )
 FOOTER_PATTERN = re.compile(
     r"^(?:\d{1,2} [A-Z]{3} \d{4} / |(?:Timing and )?Data Service by\b|"
-    r"(?:www\.)?fis-ski\.com\b|Report Created\b|Timing Sponsor\b|Data Provider\b)",
+    r"(?:www\.)?fis-ski\.com\b|Report Created\b|Timing Sponsor\b|Data Provider\b|"
+    r"data processing by\b|printed \d{1,2} [A-Z]{3} \d{4})",
     re.I,
 )
 # Text inside a table that belongs to no athlete: group headings of team
 # lists, explanations of disqualification rules.
-NO_ROW_PATTERN = re.compile(r"^(?:Women|Men|Mixed|-{3,})$|^SCE\s?\d[\d.]*\s*:", re.I)
+PREQUALIFIED = "Prequalified"
+PREQUALIFIED_PATTERN = re.compile(r"^Prequalified$", re.I)  # qualification until 2016: no rank
+NO_ROW_PATTERN = re.compile(r"^(?:Women|Men|Mixed|-{3,}|Prequalified)$|^SCE\s?\d[\d.]*\s*:", re.I)
 NOT_QUALIFIED_PATTERN = re.compile(r"^Not Qualified\b", re.I)
 RANK_PATTERN = re.compile(r"^=?(\d+)\.$")
 RANK_VALUE_PATTERN = re.compile(r"^=?(\d+)\.?$")
@@ -221,6 +242,7 @@ class Table:
 class _State:
     pdf_name: str
     not_qualified: bool = False
+    prequalified: bool = False  # rows below 'Prequalified' (qualification until 2016)
     rows: list[dict[str, Any]] = field(default_factory=list)
     section_rows: list[dict[str, Any]] = field(default_factory=list)
     layouts: set[str] = field(default_factory=set)
@@ -264,6 +286,77 @@ def _page_spans(page: pymupdf.Page) -> list[Span]:
         if key not in unique or span.bold:
             unique[key] = span
     return list(unique.values())
+
+
+def _legacy_labels(spans: list[Span]) -> list[Span]:
+    """Swiss Timing until 2023: rename the header labels to the current ones.
+
+    Competition: 'Speed Dist DP A B C D E JP' (gate / wind 'Gate Pts m/s Pts'
+    a few points lower), round total and round rank below the label
+    'Round' / 'Points', 'Total'. Training: 'Speed Dist Gate m/s Points' per
+    round, the ranks one line lower. The labels of a table are moved onto
+    the line of its 'Speed' label; 'Total' stays a little higher (own column
+    outside the round columns).
+    """
+    if any(s.text == "[km/h]" for s in spans):
+        return spans
+    speeds = sorted(
+        (s for s in spans if s.text == "Speed" and any(
+            other.text == "Dist" and abs(other.y - s.y) < 3 and 0 < other.x0 - s.x1 < 30 for other in spans
+        )),
+        key=lambda s: (s.y, s.x0),
+    )
+    bands: list[list[Span]] = []
+    for speed in speeds:
+        if bands and abs(speed.y - bands[-1][0].y) < 3:
+            bands[-1].append(speed)
+        else:
+            bands.append([speed])
+    if not bands:
+        return spans
+    replaced: dict[int, list[Span]] = {}
+
+    def put(span: Span, text: str, y: float, x0: float | None = None, x1: float | None = None) -> None:
+        moved = Span(text, span.x0 if x0 is None else x0, span.x1 if x1 is None else x1,
+                     y - (span.y1 - span.y0) / 2, y + (span.y1 - span.y0) / 2, True)
+        replaced.setdefault(id(span), []).append(moved)
+
+    for band in bands:
+        band_y = band[0].y
+        first = band[0].x0
+        near = [s for s in spans if band_y - 13 < s.y < band_y + 14 and id(s) not in replaced]
+        training = any(
+            s.text == "Rank" and s.x0 >= first - 5 and band_y + 8 < s.y < band_y + 14 for s in near
+        )
+        if not training:
+            for span in near:
+                below = next((s for s in near if s.text == "Points" and 0 < s.y - span.y < 12
+                              and abs(s.x0 - span.x0) < 5), None) if span.text == "Round" else None
+                if below is not None:
+                    # One label above two columns: round total, round rank.
+                    put(span, "POINTS", band_y, below.x0 - 4, below.x1 - 10)
+                    put(below, "RANK", band_y, below.x1 - 4, below.x1 + 6)
+        for span in near:
+            if id(span) in replaced:
+                continue
+            if span.x1 <= first:
+                if span.text in LEGACY_LEFT_LABELS and span.y < band_y + 14:
+                    put(span, LEGACY_LEFT_LABELS[span.text], band_y)
+                continue
+            if training:
+                if span.text in LEGACY_LABELS and abs(span.y - band_y) < 3:
+                    put(span, LEGACY_LABELS[span.text], band_y)
+                elif span.text in ("Rank", "Points") and band_y + 8 < span.y < band_y + 14:
+                    put(span, LEGACY_LABELS[span.text], span.y)
+                continue
+            if span.text == "Total" and abs(span.y - band_y) < 6:
+                put(span, "TOTAL", band_y - 5)
+            elif span.text in LEGACY_LABELS and abs(span.y - band_y) < 6:
+                put(span, LEGACY_LABELS[span.text], band_y)
+    result = []
+    for span in spans:
+        result.extend(replaced.get(id(span), [span]))
+    return result
 
 
 def _vertical_segments(page: pymupdf.Page) -> list[tuple[float, float, float]]:
@@ -401,15 +494,22 @@ def _build_table(
     # The nation column may end close to the speed column (two tables side by side).
     nation = [
         label for label in spans
-        if label.text.upper() in ("NSA", "NOC", "CODE") and header_y - 25 < label.y < header_y + 3
+        if label.text.upper() in ("NSA", "NOC", "CODE", "NAT") and header_y - 25 < label.y < header_y + 3
         and left <= label.x0 and label.x1 < speed.x0
     ]
     if nation:
         data_low = max(data_low, max(label.x1 for label in nation) + 1)
 
-    competition = _match_labels(row[: len(COMPETITION_LABELS)], COMPETITION_LABELS, 1)
+    labels_count = len(COMPETITION_LABELS)
+    competition = _match_labels(row[:labels_count], COMPETITION_LABELS, 1)
+    if competition is None and not any(s.text.upper() == "GATE" for s in row):
+        # Small hill without gate / wind compensation.
+        labels_count = len(COMPETITION_SHORT_LABELS)
+        competition = _match_labels(row[:labels_count], COMPETITION_SHORT_LABELS, 1)
+        if competition is not None:
+            state.wind_column = False
     if competition is not None:
-        rest = row[len(COMPETITION_LABELS) :]
+        rest = row[labels_count:]
         has_total = any(
             s.text.upper() == "TOTAL" and header_y - 25 < s.y < header_y + 3 and left <= s.x0 < right
             for s in spans
@@ -418,7 +518,7 @@ def _build_table(
             # KO qualification (Four Hills): the total column is called POINTS,
             # printed one header row higher.
             total = [rest.pop()]
-            row = row[: len(COMPETITION_LABELS) + len(rest)]
+            row = row[: labels_count + len(rest)]
         else:
             total = []
         if rest:
@@ -443,8 +543,14 @@ def _build_table(
         columns = _columns(competition, data_low, total_low)
         return Table("competition", left, right, header_y, data_low, [columns], total_low=total_low)
 
-    groups = len(row) // len(TRAINING_LINE1_LABELS)
-    line1 = _match_labels(row, TRAINING_LINE1_LABELS, groups) if groups else None
+    line1_labels, line2_labels = TRAINING_LINE1_LABELS, TRAINING_LINE2_LABELS
+    groups = len(row) // len(line1_labels)
+    line1 = _match_labels(row, line1_labels, groups) if groups else None
+    if line1 is None and len(row) % len(TRAINING_SHORT_LINE1_LABELS) == 0:
+        # Small hill without wind / gate points: speed, distance, gate.
+        line1_labels, line2_labels = TRAINING_SHORT_LINE1_LABELS, TRAINING_SHORT_LINE2_LABELS
+        groups = len(row) // len(line1_labels)
+        line1 = _match_labels(row, line1_labels, groups)
     if line1 is None:
         raise _fail(state, page, f"unknown result table header {texts}.")
     rank_row_y = next(
@@ -457,12 +563,12 @@ def _build_table(
         if rank_row_y is not None
         else []
     )
-    line2 = _match_labels(rank_row, TRAINING_LINE2_LABELS, groups)
+    line2 = _match_labels(rank_row, line2_labels, groups)
     if line2 is None and rank_row:
         # Labels of the second line misplaced in the PDF: its values stand
         # below the first line labels (speed rank below speed, ...).
         line2 = [
-            (span, f"{TRAINING_LINE2_LABELS[index % len(TRAINING_LINE2_LABELS)][1]}#{group}")
+            (span, f"{line2_labels[index % len(line2_labels)][1]}#{group}")
             for index, (span, field_group) in enumerate(line1)
             for group in [field_group.split("#")[1]]
         ]
@@ -782,6 +888,8 @@ def _parse_block(
                     state, page,
                     f"{label}: several values in {field_name}: {[s.text for s in cell_spans]}.",
                 )
+            if field_name == SKIPPED:
+                continue
             text = "".join(s.text for s in cell_spans)
             if text in STATUS_CODES:
                 row["Status"] = text
@@ -855,7 +963,7 @@ def _section_rows(
 
 
 def _parse_page(page: pymupdf.Page, page_number: int, state: _State) -> None:
-    spans = _page_spans(page)
+    spans = _legacy_labels(_page_spans(page))
     tables = _find_tables(spans, page.rect.width, state, page_number)
     # Pages without any bold print (embedded fonts): headings are plain text.
     plain = not any(s.bold for s in spans)
@@ -893,6 +1001,9 @@ def _parse_page(page: pymupdf.Page, page_number: int, state: _State) -> None:
             ),
             default=None,
         )
+        prequalified_y = min(
+            (s.y for s in table_spans if PREQUALIFIED_PATTERN.match(s.text)), default=None
+        )
         used: set[int] = set()
         team = any(TEAM_NAME_PATTERN.match(s.text) for s in table_spans)
         cells = _row_cells(page, table, table_end, team)
@@ -908,7 +1019,10 @@ def _parse_page(page: pymupdf.Page, page_number: int, state: _State) -> None:
             row = _parse_block(block, table, state, page_number)
             if row is None:
                 continue
-            if state.not_qualified or (not_qualified_y is not None and top > not_qualified_y):
+            if state.prequalified or (prequalified_y is not None and top > prequalified_y):
+                # Below the not qualified athletes: in the next round without qualifying.
+                row.setdefault("Remarks", PREQUALIFIED)
+            elif state.not_qualified or (not_qualified_y is not None and top > not_qualified_y):
                 row.setdefault("Status", "Not Qualified")
             if row.get(TEAM_KEY):
                 state.team = row
@@ -920,6 +1034,8 @@ def _parse_page(page: pymupdf.Page, page_number: int, state: _State) -> None:
             state.rows.append(row)
         if not_qualified_y is not None:
             state.not_qualified = True
+        if prequalified_y is not None:
+            state.prequalified = True
         lost = [
             s.text for s in table_spans
             if id(s) not in used and not NOT_QUALIFIED_PATTERN.match(s.text)
@@ -985,6 +1101,8 @@ def _validate(state: _State, text: str) -> None:
                 if abs(calculated - distance_points) > TOLERANCE:
                     errors.append(f"{row['Name']}: distance points round {number}")
         for row in rows:
+            if row.get("Remarks") == PREQUALIFIED:
+                continue  # jumps without judges and total
             round_sum = 0.0
             rounds = 0
             for number in range(1, MAX_ROUNDS + 1):

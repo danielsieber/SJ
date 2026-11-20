@@ -49,27 +49,37 @@ Sekunden; eine ganze Saison dauert beim ersten Lauf etwa eine halbe Stunde.
 
 ## Abgleich
 
-- Ein Springer ist vorhanden, wenn sein FIS-Code in `Liste_Springer_ID`
-  steht oder Name und NSA dort vorkommen.
+- Ein Springer ist vorhanden, wenn Name und NSA in `Liste_Springer_ID`
+  vorkommen oder ein Eintrag mit seinem FIS-Code die JumperID nach der Regel
+  als `JumperID` oder `JumperID_pdf` hat.
 - Steht der FIS-Code unter einem anderen Namen oder einer anderen NSA in der
   Liste (z. B. nach Heirat oder Nationenwechsel), kommt er ins Sheet
   `Prüfen`, nicht zu den fehlenden.
 - Die SchanzenID ist `Ort HSxxx` (Ort aus dem PDF ohne Land, z. B.
-  `Einsiedeln HS117`) und wird mit `Liste_Schanzen_ID` verglichen.
+  `Einsiedeln HS117`) und wird mit den Spalten `SchanzenID_pdf` und
+  `SchanzenID` von `Liste_Schanzen_ID` verglichen. `Fehlende_SchanzenID`
+  hat dieselben Spalten (A `SchanzenID_pdf`, B `SchanzenID`, beide mit der
+  Schreibweise des PDFs); ist es eine bekannte Schanze in anderer
+  Schreibweise, in B deren SchanzenID eintragen.
 
 ## Fehlende_JumperID.xlsx
 
 - `Übersicht`: Zahlen und Meldungen (z. B. Wettkämpfe ohne PDF oder ohne
   Athleten auf der FIS-Seite).
-- `Fehlende_JumperID`: Spalten A:G wie `Liste_Springer_ID` (JumperID,
-  Name, NSA, Gender, DoB, FIS_Code, JG), zum Einfügen ab Spalte A; `Age`
-  berechnet die Tabelle. Die JumperID ist ein Vorschlag nach der Regel der
+- `Fehlende_JumperID`: Spalten A:H wie `Liste_Springer_ID` (JumperID_pdf,
+  JumperID, Name, NSA, Gender, DoB, FIS_Code, JG), zum Einfügen ab Spalte A;
+  `Age` berechnet die Tabelle. Die JumperID ist ein Vorschlag nach der Regel der
   Liste (NSA, je sechs Buchstaben des ersten und zweiten Namensworts). Rot
   markiert: JumperID schon vergeben, Gender oder Geburtsdatum unbekannt.
   Gelb: FIS kennt nur den Jahrgang (meist Nachwuchs); das Geburtsdatum ist
   dann wie in der Liste üblich der 1. Januar.
   Rechts daneben Club, Quelle des Geburtsdatums, erster Wettkampf, Hinweis.
-- `Prüfen`: FIS-Code vorhanden, aber Name oder NSA weichen ab.
+- `Prüfen`: FIS-Code vorhanden, aber Name oder NSA weichen ab. Gleiches
+  Layout wie `Liste_Springer_ID`: `JumperID_pdf` so, wie sie beim Lesen der
+  PDFs entsteht (z. B. `HAYBOE MICHAE`), der Rest aus der Zeile mit dem
+  FIS-Code (`AUT HAYBOE MICHAE`, `HAYBOECK Michael`, ...). A:H als zusätzliche
+  Zeile in die Liste einfügen; rechts daneben Name und NSA bei der FIS und
+  erster Wettkampf.
 - `Fehlende_SchanzenID`: Spalten wie `Liste_Schanzen_ID`; `Pts / Gate für
   DGW` und die UTC-Spalten stehen nicht im PDF und sind von Hand zu ergänzen.
 

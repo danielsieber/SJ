@@ -107,9 +107,9 @@ DOB_PATTERN = re.compile(r"\b(\d{1,2}) (" + "|".join(MONTHS) + r") ((?:19|20)\d{
 ATHLETE_LINE = re.compile(r"^\s*(?:\d{1,3}\s+){1,2}(\S.*?\S)\s{2,}([A-Z]{3})(?=\s|$)")
 FIS_GENDER = {"M": "M", "W": "F"}  # Liste_Springer_ID uses M / F
 YEAR_ONLY = "nur Jahrgang (1.1.)"
-JUMPER_HEADERS = ("JumperID", "Name", "NSA", "Gender", "DoB", "FIS_Code", "JG")
+JUMPER_HEADERS = ("JumperID_pdf", "JumperID", "Name", "NSA", "Gender", "DoB", "FIS_Code", "JG", "Age")
 HILL_HEADERS = (
-    "SchanzenID", "HS", "95%", "K", "Pts./m", "Headwind \nPts./m/s",
+    "SchanzenID_pdf", "SchanzenID", "HS", "95%", "K", "Pts./m", "Headwind \nPts./m/s",
     "Tailwind \nPts./m/s", "Gate \nFactor \nPts./m", "Pts / Gate \nfür DGW",
     "UTC Sommer", "UTC Winter",
 )
@@ -418,8 +418,9 @@ class Comparison:
 def compare(data: SeasonData, listen: SjListen) -> Comparison:
     """An athlete is listed when name and NSA are in Liste_Springer_ID, or when
     an entry with the same FIS code has the JumperID the rule gives for the
-    FIS name ('BROBECK Hannah Christina' -> 'NOR BROBE HANNA'). A FIS code
-    listed only under another JumperID (name change) goes to 'Prüfen'.
+    FIS name ('BROBECK Hannah Christina' -> 'NOR BROBE HANNA') or has it as
+    JumperID_pdf ('HAYBOE MICHAE'). A FIS code listed only under another
+    JumperID (name change, other spelling) goes to 'Prüfen'.
     """
     missing, check = [], []
     for athlete in data.athletes.values():
@@ -427,7 +428,7 @@ def compare(data: SeasonData, listen: SjListen) -> Comparison:
             continue
         same_code = listen.all_by_fis_code(athlete.fis_code)
         proposed = _key(proposed_jumper_id(athlete.name, athlete.nsa))
-        if any(_key(jumper.jumper_id) == proposed for jumper in same_code):
+        if any(proposed in (_key(jumper.jumper_id), _key(jumper.pdf_id)) for jumper in same_code):
             continue
         if same_code:
             check.append((athlete, same_code[0]))
@@ -468,7 +469,8 @@ def write_workbook(result: Comparison, listen: SjListen, season: int, data: Seas
     _header(sheet, JUMPER_HEADERS)
     info = ("Club", "Quelle DoB", "Erster Wettkampf", "Hinweis")
     _header(sheet, info, column=len(JUMPER_HEADERS) + 2)
-    used_ids = {_key(jumper.jumper_id) for jumper in listen.jumpers}
+    used_ids = {_key(jumper.jumper_id) for jumper in listen.jumpers} | {
+        _key(jumper.pdf_id) for jumper in listen.jumpers if jumper.pdf_id}
     rows = []
     for athlete in result.missing:
         jumper_id = proposed_jumper_id(athlete.name, athlete.nsa)
@@ -481,56 +483,76 @@ def write_workbook(result: Comparison, listen: SjListen, season: int, data: Seas
         gender = next(iter(athlete.genders)) if len(athlete.genders) == 1 else None
         year = athlete.dob.year if athlete.dob else athlete.birth_year
         values = (
-            jumper_id, athlete.name, athlete.nsa, gender,
-            athlete.dob, int(athlete.fis_code), year,
+            jumper_id, jumper_id, athlete.name, athlete.nsa, gender,
+            athlete.dob, int(athlete.fis_code), year, f"=YEAR(TODAY())-H{row_number}",
         )
         for column, value in enumerate(values, start=1):
             cell = sheet.cell(row=row_number, column=column, value=value)
-            if column == 5 and value is not None:
+            if column == 6 and value is not None:
                 cell.number_format = "yyyy-mm-dd"
         notes = []
         if _key(jumper_id) in used_ids or proposed_count[_key(jumper_id)] > 1:
             notes.append("JumperID schon vergeben, bitte anpassen")
-            sheet.cell(row=row_number, column=1).fill = MARK_FILL
+            sheet.cell(row=row_number, column=2).fill = MARK_FILL
         if gender is None:
             notes.append("Gender unbekannt")
-            sheet.cell(row=row_number, column=4).fill = MARK_FILL
+            sheet.cell(row=row_number, column=5).fill = MARK_FILL
         if athlete.dob is None:
             notes.append("Geburtsdatum unbekannt")
-            sheet.cell(row=row_number, column=5).fill = MARK_FILL
+            sheet.cell(row=row_number, column=6).fill = MARK_FILL
         elif athlete.dob_source == YEAR_ONLY:
             notes.append("Geburtsdatum: nur Jahrgang bekannt")
-            sheet.cell(row=row_number, column=5).fill = YEAR_FILL
+            sheet.cell(row=row_number, column=6).fill = YEAR_FILL
         extra = (athlete.club, athlete.dob_source, athlete.first_competition, "; ".join(notes))
         for offset, value in enumerate(extra):
             sheet.cell(row=row_number, column=len(JUMPER_HEADERS) + 2 + offset, value=value or None)
-    widths = {"A": 18, "B": 30, "C": 6, "D": 8, "E": 12, "F": 10, "G": 6, "I": 30, "J": 40, "K": 40, "L": 40}
+    widths = {"A": 18, "B": 18, "C": 30, "D": 6, "E": 8, "F": 12, "G": 10, "H": 6, "I": 6,
+              "K": 30, "L": 40, "M": 40, "N": 40}
     for letter, width in widths.items():
         sheet.column_dimensions[letter].width = width
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = f"A1:{sheet.cell(row=1, column=len(JUMPER_HEADERS) + 1 + len(info)).column_letter}{max(len(rows) + 1, 1)}"
 
+    # Prüfen: the jumper as listed under its FIS code, with the JumperID the
+    # PDFs give (JumperID_pdf): rows to add to Liste_Springer_ID, e.g.
+    # 'HAYBOE MICHAE' -> 'AUT HAYBOE MICHAE' for 'Hayboeck Michael' without NSA.
     check = workbook.create_sheet("Prüfen")
-    _header(check, ("FIS_Code", "Name FIS", "NSA FIS", "JumperID Liste", "Name Liste", "NSA Liste", "Erster Wettkampf"))
-    for row_number, (athlete, listed) in enumerate(sorted(result.check, key=lambda item: item[1].jumper_id), start=2):
-        for column, value in enumerate(
-            (int(athlete.fis_code), athlete.name, athlete.nsa, listed.jumper_id, listed.name, listed.nsa, athlete.first_competition),
-            start=1,
-        ):
-            check.cell(row=row_number, column=column, value=value)
-    for letter, width in {"A": 10, "B": 30, "C": 8, "D": 18, "E": 30, "F": 9, "G": 40}.items():
+    _header(check, JUMPER_HEADERS)
+    check_info = ("Name FIS", "NSA FIS", "Erster Wettkampf")
+    _header(check, check_info, column=len(JUMPER_HEADERS) + 2)
+    check_rows = sorted(
+        ((proposed_jumper_id(athlete.name, athlete.nsa), athlete, listed) for athlete, listed in result.check),
+        key=lambda item: (item[2].jumper_id, item[0]),
+    )
+    for row_number, (pdf_id, athlete, listed) in enumerate(check_rows, start=2):
+        values = (
+            pdf_id, listed.jumper_id, listed.name, listed.nsa or None, listed.gender, listed.dob,
+            int(athlete.fis_code), listed.year, f"=YEAR(TODAY())-H{row_number}",
+        )
+        for column, value in enumerate(values, start=1):
+            cell = check.cell(row=row_number, column=column, value=value)
+            if column == 6 and value is not None:
+                cell.number_format = "yyyy-mm-dd"
+        for offset, value in enumerate((athlete.name, athlete.nsa, athlete.first_competition)):
+            check.cell(row=row_number, column=len(JUMPER_HEADERS) + 2 + offset, value=value or None)
+    for letter, width in {"A": 18, "B": 18, "C": 30, "D": 6, "E": 8, "F": 12, "G": 10, "H": 6, "I": 6,
+                          "K": 30, "L": 8, "M": 40}.items():
         check.column_dimensions[letter].width = width
+    check.freeze_panes = "A2"
 
     hills = workbook.create_sheet("Fehlende_SchanzenID")
     _header(hills, HILL_HEADERS)
     _header(hills, ("Wettkämpfe",), column=len(HILL_HEADERS) + 2)
-    keys = ("SchanzenID", "Hill Size", "HS 95%", "K-Punkt", "Meter Value", "HWC", "TWC", "Gate Factor")
+    # SchanzenID_pdf and SchanzenID: the spelling of the PDF (change SchanzenID
+    # to the name of a listed hill when it is the same hill).
+    keys = ("SchanzenID", "SchanzenID", "Hill Size", "HS 95%", "K-Punkt", "Meter Value", "HWC", "TWC", "Gate Factor")
     for row_number, hill in enumerate(sorted(result.missing_hills, key=lambda hill: hill.hill_id), start=2):
         for column, key in enumerate(keys, start=1):
             hills.cell(row=row_number, column=column, value=hill.values.get(key))
         hills.cell(row=row_number, column=len(HILL_HEADERS) + 2, value="; ".join(hill.competitions))
     hills.column_dimensions["A"].width = 30
-    hills.column_dimensions["M"].width = 80
+    hills.column_dimensions["B"].width = 30
+    hills.column_dimensions["N"].width = 80
 
     summary = workbook.create_sheet("Übersicht", 0)
     lines = [
@@ -543,8 +565,10 @@ def write_workbook(result: Comparison, listen: SjListen, season: int, data: Seas
         ("Schanzen in der Saison", len(data.hills)),
         ("Fehlende SchanzenID", len(result.missing_hills)),
         ("", ""),
-        ("Einfügen", "Fehlende_JumperID A:G in Liste_Springer_ID ab Spalte A einfügen "
-                     "(Age berechnet die Tabelle); Fehlende_SchanzenID A:H in Liste_Schanzen_ID, "
+        ("Einfügen", "Fehlende_JumperID A:H und Prüfen A:H in Liste_Springer_ID ab Spalte A einfügen "
+                     "(Age berechnet die Tabelle; Prüfen: gleiche JumperID, neue JumperID_pdf); "
+                     "Fehlende_SchanzenID A:I in Liste_Schanzen_ID, "
+                     "SchanzenID (B) bei anderer Schreibweise einer bekannten Schanze anpassen, "
                      "Pts / Gate für DGW und UTC ergänzen."),
     ]
     for row_number, (label, value) in enumerate(lines, start=1):

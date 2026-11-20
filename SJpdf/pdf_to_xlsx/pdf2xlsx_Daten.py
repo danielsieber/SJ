@@ -21,6 +21,7 @@ DATA_ROWS = (
     "Hill",
     "Gender",
     "Rangliste",
+    "PDF readable",  # yes / no: result table read and checked (set by pdf2xlsx.py)
     "Hill Size",
     "HS 95%",
     "K-Punkt",
@@ -70,6 +71,12 @@ DATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 JUDGE_LINE_PATTERN = re.compile(r"^[A-E]:?\s")  # judge line of the jury list
+# Line of an official of the jury list, not a place.
+OFFICIAL_LINE_PATTERN = re.compile(
+    r"\b(?:Delegate|Director|Chief|Controller|Assistant|Coordinator|Judges?)\b", re.I
+)
+# First line below the date that is no place: 'Unofficial Results', 'START: 19:03'.
+NOT_PLACE_PATTERN = re.compile(r"\b(?:RESULTS|START|JURY|ROUND|DELEGATE)\b|:", re.I)
 GERMAN_DATE_PATTERN = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b")  # '15.03.2026'
 MONTHS = {
     "JAN": 1,
@@ -86,6 +93,10 @@ MONTHS = {
     "DEC": 12,
 }
 GENDER_PATTERN = re.compile(r"\b(MEN|WOMEN|MIXED)\b", re.IGNORECASE)
+# Swiss Timing until 2023: 'Ski Jumping Ladies', 'Girls Younger' in the title
+# lines (competitions of men, and some of women, carry no gender at all).
+HEAD_GENDER_PATTERN = re.compile(r"\b(MEN|WOMEN|MIXED|LADIES|GIRLS|BOYS)\b", re.IGNORECASE)
+HEAD_GENDERS = {"LADIES": "WOMEN", "GIRLS": "WOMEN", "BOYS": "MEN"}
 NUMBER = r"(-?\d+(?:[.,]\d+)?)"
 ROUND_PATTERN = re.compile(
     r"\b(1st|first|2nd|second|3rd|third|final|trial)\s+round\b",
@@ -167,10 +178,18 @@ def _local_date(lines: list[str]) -> date | None:
     return None
 
 
-def _parse_hill_and_gender(hill_text: str, title: str) -> tuple[str | None, str | None]:
+def _parse_hill_and_gender(
+    hill_text: str, title: str, head: list[str] | None = None
+) -> tuple[str | None, str | None]:
     gender_match = GENDER_PATTERN.search(hill_text) or GENDER_PATTERN.search(title)
     if gender_match is None:
-        return hill_text or None, None
+        if head is None:
+            return hill_text or None, None
+        head_match = HEAD_GENDER_PATTERN.search(" ".join(head))
+        if head_match is None:
+            return hill_text or None, None
+        gender = head_match.group(1).upper()
+        return hill_text or None, HEAD_GENDERS.get(gender, gender)
 
     gender = gender_match.group(1).upper()
     hill = GENDER_PATTERN.sub(" ", hill_text)
@@ -389,11 +408,30 @@ def extract_data_from_text(text: str, pdf_name: str = "<PDF>") -> dict[str, Any]
         for line in lines[date_index + 1 : header_end]:
             line_without_date = DATE_PATTERN.sub("", line)
             line_without_times = time_pattern.sub("", line_without_date).strip()
-            if line_without_times:
+            if re.search(r"\w", line_without_times):  # not the '/' of 'Start Time 18:04 / End Time 19:35'
                 detail_lines.append(line_without_times)
 
     place = None
     hill_text = ""
+    if date_index is not None and title_index is not None:
+        # Swiss Timing until 2023: 'Engelberg (SUI)' above the date line; below
+        # it only times and the start list, whose first '(NTS)' is a club.
+        for index in range(title_index + 1, date_index):
+            line = lines[index]
+            if (
+                len(COUNTRY_PATTERN.findall(line)) == 1
+                and COUNTRY_PATTERN.search(line).end() == len(line.rstrip())
+                and " / " not in line and "(FIS)" not in line
+                and len(line.split()) <= 5
+                and not JUDGE_LINE_PATTERN.match(line)
+            ):
+                place = line[: COUNTRY_PATTERN.search(line).end()]
+                # 'LARGE HILL INDIVIDUAL TUE 27 DEC 2022': hill and date on one line.
+                hill_text = DATE_PATTERN.sub("", lines[index + 1]).strip()
+                if title_index + 1 < index:
+                    competition = lines[title_index + 1]  # '5th Continental Cup Competition'
+                detail_lines = []  # place found: not again below the date
+                break
     if detail_lines:
         # 'Einsiedeln (SUI)'; not '(FIS)' of an official, not the footer
         # '27 JUN 2023 / Zakopane (POL) / 3001'.
@@ -404,20 +442,23 @@ def extract_data_from_text(text: str, pdf_name: str = "<PDF>") -> dict[str, Any]
                 if len(COUNTRY_PATTERN.findall(line)) == 1
                 and " / " not in line and "(FIS)" not in line
                 and not JUDGE_LINE_PATTERN.match(line)  # 'E HLAVA Josef (CZE)'
+                and not OFFICIAL_LINE_PATTERN.search(line)  # 'FISU Technical Delegate GANZENHUBER Paul (AUT)'
             ),
             None,
         )
         if location_index is None:
             location_index = 0
         place = detail_lines[location_index]
-        if JUDGE_LINE_PATTERN.match(place):
-            place = None  # no place in the header, only the jury list
+        if JUDGE_LINE_PATTERN.match(place) or (
+            not COUNTRY_PATTERN.search(place) and NOT_PLACE_PATTERN.search(place)
+        ):
+            place = None  # no place in the header ('Unofficial Results', jury list)
     if place is not None:
         # 'Engelberg (SUI) Start Time Trial 11:00' -> 'Engelberg (SUI)'
         country = COUNTRY_PATTERN.search(place)
         if country:
             place = place[: country.end()]
-        if location_index + 1 < len(detail_lines):
+        if detail_lines and location_index + 1 < len(detail_lines):
             hill_text = detail_lines[location_index + 1]
 
     if place is None:
@@ -440,7 +481,9 @@ def extract_data_from_text(text: str, pdf_name: str = "<PDF>") -> dict[str, Any]
             following = [l for l in head[location_index + 1 :] if not GERMAN_DATE_PATTERN.search(l)]
             if not hill_text and following:
                 hill_text = following[0]
-    hill, gender = _parse_hill_and_gender(hill_text, title)
+    # Title lines down to the hill line ('NORMAL HILL INDIVIDUAL').
+    head = lines[title_index : title_index + 4] if title_index is not None else None
+    hill, gender = _parse_hill_and_gender(hill_text, title, head)
     rangliste = next(
         (line for line in lines if results_pattern.match(line)),
         None,

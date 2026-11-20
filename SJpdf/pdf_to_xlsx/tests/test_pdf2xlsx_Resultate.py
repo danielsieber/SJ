@@ -170,3 +170,34 @@ class RealPdfTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LegacyLayoutTests(unittest.TestCase):
+    """Swiss Timing until 2023: old header labels renamed to the current ones."""
+
+    def test_competition_header(self):
+        from pdf_to_xlsx.pdf2xlsx_Resultate import Span, _legacy_labels
+
+        def span(text, x0, x1, y):
+            return Span(text, x0, x1, y - 4, y + 4, True)
+
+        spans = [
+            span("Rk", 22, 32, 239), span("Bib", 42, 54, 239), span("Name", 66, 87, 227),
+            span("Nation", 180, 204, 227), span("Speed", 212, 232, 239), span("Dist", 240, 252, 239),
+            span("DP", 266, 275, 239), *(span(j, 289 + 18 * i, 293 + 18 * i, 239) for i, j in enumerate("ABCDE")),
+            span("JP", 380, 388, 239), span("Gate", 399, 417, 239), span("Pts", 429, 441, 239),
+            span("m/s", 457, 473, 239), span("Pts", 486, 498, 239), span("Round", 510, 534, 227),
+            span("Points", 510, 534, 237), span("Total", 549, 567, 239),
+        ]
+        renamed = _legacy_labels(spans)
+        row = [s.text for s in sorted(renamed, key=lambda s: s.x0) if abs(s.y - 239) < 1 and s.x0 > 210]
+        self.assertEqual(row, ["[km/h]", "[m]", "POINTS", "A", "B", "C", "D", "E", "POINTS",
+                               "GATE", "POINTS", "[m/s]", "POINTS", "POINTS", "RANK"])
+        self.assertIn("TOTAL", [s.text for s in renamed])
+        self.assertEqual({s.text for s in renamed if s.x0 < 60}, {"RANK", "BIB"})
+
+    def test_current_layout_unchanged(self):
+        from pdf_to_xlsx.pdf2xlsx_Resultate import Span, _legacy_labels
+
+        spans = [Span("[km/h]", 200, 220, 100, 108, True), Span("Speed", 200, 220, 90, 98, True)]
+        self.assertIs(_legacy_labels(spans), spans)

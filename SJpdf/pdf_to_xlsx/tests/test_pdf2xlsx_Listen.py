@@ -34,10 +34,11 @@ def write_listen(path: Path, jumpers=(), hills=()) -> Path:
     sheet["A1"] = "Schanzenverzeichnis"
     for _ in range(8):
         sheet.append([])
-    sheet.append(["SchanzenID", "HS", "95%", "K", "Pts./m", "Headwind \nPts./m/s",
+    sheet.append(["SchanzenID_pdf", "SchanzenID", "HS", "95%", "K", "Pts./m", "Headwind \nPts./m/s",
                   "Tailwind \nPts./m/s", "Gate \nFactor \nPts./m", "Pts / Gate \nfür DGW"])
-    for hill, dgw in hills:
-        sheet.append([hill, None, None, None, None, None, None, None, dgw])
+    for hill in hills:  # (SchanzenID, dgw) or (SchanzenID_pdf, SchanzenID, dgw)
+        pdf_id, hill_id, dgw = hill if len(hill) == 3 else (hill[0], *hill)
+        sheet.append([pdf_id, hill_id, None, None, None, None, None, None, None, dgw])
     workbook.save(path)
     workbook.close()
     return path
@@ -100,6 +101,45 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(listen.resolve("SCHARFENBERG AF", "GER"), ("GER SCHARF ANNA-F", None))
         self.assertEqual(listen.resolve("SUNDAL KE", "NOR"), ("NOR SUNDAL KRISTO", None))
         self.assertIsNone(listen.resolve("SUNDAL E", "NOR")[0])
+
+    def test_hill_spelling_of_the_pdfs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_listen(Path(directory) / "SJ-Listen.xlsm", hills=[
+                ("Lake Placid/ORDA HS128", "Lake Placid HS128", 4.7),
+                ("Lake Placid HS128", 4.7),
+            ])
+            listen = read_sj_listen(path)
+        self.assertEqual(listen.hill_id("Lake Placid/ORDA HS128"), "Lake Placid HS128")
+        self.assertEqual(listen.hill_id("lake placid hs128"), "Lake Placid HS128")
+        self.assertEqual(listen.dgw("Lake Placid/ORDA HS128"), 4.7)
+        self.assertIsNone(listen.hill_id("Placid HS128"))
+        from pdf_to_xlsx.pdf2xlsx_Ranglisten import competition_file_name
+        values = {**daten_values(), "Place": "Lake Placid/ORDA (USA)", "Hill Size": 128}
+        self.assertEqual(
+            competition_file_name([values], {"Lake Placid/ORDA HS128": "Lake Placid HS128"}),
+            "2026-09-12 FCM Lake Placid HS128",
+        )
+
+    def test_jumper_spelling_of_the_pdfs(self):
+        # Liste_Springer_ID with JumperID_pdf in column A: 'Hayboeck Michael'
+        # without NSA gives 'HAYBOE MICHAE', listed as AUT HAYBOE MICHAE.
+        from openpyxl import load_workbook
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_listen(Path(directory) / "SJ-Listen.xlsm")
+            workbook = load_workbook(path)
+            sheet = workbook["Liste_Springer_ID"]
+            sheet.delete_rows(10)
+            sheet.append(["JumperID_pdf", "JumperID", "Name", "NSA", "Gender", "DoB", "FIS_Code", "JG"])
+            sheet.append(["AUT HAYBOE MICHAE", "AUT HAYBOE MICHAE", "HAYBOECK Michael", "AUT", "M", None, 5288, 1991])
+            sheet.append(["HAYBOE MICHAE", "AUT HAYBOE MICHAE", "HAYBOECK Michael", "AUT", "M", None, 5288, 1991])
+            sheet.append(["AUT KRAMER SARA", "AUT KRAMER MARITA", "KRAMER Marita", "AUT", "F", None, 7669, 2001])
+            workbook.save(path)
+            listen = read_sj_listen(path)
+        self.assertEqual(listen.resolve("Hayboeck Michael", None), ("AUT HAYBOE MICHAE", None))
+        self.assertEqual(listen.resolve("HAYBOECK Michael", "AUT"), ("AUT HAYBOE MICHAE", None))
+        self.assertEqual(listen.resolve("KRAMER Sara", "AUT"), ("AUT KRAMER MARITA", None))
+        self.assertEqual(listen.by_fis_code(5288).jumper_id, "AUT HAYBOE MICHAE")
+        self.assertEqual(listen.jumpers[1].pdf_id, "HAYBOE MICHAE")
 
     def test_hill_name(self):
         self.assertEqual(hill_name("Einsiedeln (SUI)", 117), "Einsiedeln HS117")
@@ -236,14 +276,14 @@ class WorkbookTests(unittest.TestCase):
             output_file = Path(folder) / "latest event.xlsx"
             old = Workbook()
             old.active.title = "Daten"
-            old["Daten"]["A19"].fill = WARNING_FILL
+            old["Daten"]["A20"].fill = WARNING_FILL
             old.save(output_file)
             _warnings, workbook = self.convert(folder, None)
             daten = workbook["Daten"]
-            self.assertEqual(daten["A19"].value, "Pts / Gate DGW")
-            self.assertIsNone(daten["A19"].fill.fill_type)
-            self.assertEqual(daten["A20"].value, "DG 1")
-            self.assertEqual(daten["A20"].fill.fgColor.rgb, "FFD9D9D9")
+            self.assertEqual(daten["A20"].value, "Pts / Gate DGW")
+            self.assertIsNone(daten["A20"].fill.fill_type)
+            self.assertEqual(daten["A21"].value, "DG 1")
+            self.assertEqual(daten["A21"].fill.fgColor.rgb, "FFD9D9D9")
             workbook.close()
 
     def test_missing_list_file_is_a_warning_and_conversion_continues(self):
@@ -257,3 +297,22 @@ class WorkbookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenderFromJumpersTests(unittest.TestCase):
+    def test_gender_of_listed_jumpers(self):
+        from pdf_to_xlsx.pdf2xlsx import _gender_from_jumpers
+        from pdf_to_xlsx.pdf2xlsx_Listen import Jumper, SjListen
+        from pdf_to_xlsx.pdf2xlsx_Ranglisten import PdfResults
+
+        listen = SjListen(jumpers=[
+            Jumper("AUT AAA ANNA", "AAA Anna", "AUT", 1, "F"),
+            Jumper("AUT BBB BERTA", "BBB Berta", "AUT", 2, "F"),
+            Jumper("AUT CCC CILLI", "CCC Cilli", "AUT", 3, "F"),
+            Jumper("AUT DDD DANIEL", "DDD Daniel", "AUT", 4, "M"),
+        ])
+        rows = [{"Name": n, "NSA": "AUT"} for n in ("AAA Anna", "BBB Berta", "CCC Cilli", "XXX Unknown")]
+        result = PdfResults("x", rows, None, None, None, None)
+        self.assertEqual(_gender_from_jumpers([result], listen), "WOMEN")
+        rows.append({"Name": "DDD Daniel", "NSA": "AUT"})  # one of four: mixed team
+        self.assertEqual(_gender_from_jumpers([result], listen), "MIXED")

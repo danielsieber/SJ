@@ -33,7 +33,10 @@ else:
 START_LIST_COLUMNS = ("Start Order", "Bib", "Name")
 # Start list per round of a competition (RL): (first round, final round).
 START_LIST_SUFFIXES = ("SLR1", "SLRF")
-FOOTER_PATTERN = re.compile(r"^\d{1,2} [A-Z]{3} \d{4} / .+ / \d+$")
+FOOTER_PATTERN = re.compile(
+    r"^\d{1,2} [A-Z]{3} \d{4} / .+ / \d+$"
+    r"|^data processing by|^printed \d{1,2} [A-Z]{3} \d{4}"  # Swiss Timing until 2023
+)
 NUMBER_PATTERN = re.compile(r"^\*?\d{1,3}(?:-\d)?$")  # team events: '8-1'; KO lucky loser: '*35'
 MAX_LABEL_DISTANCE = 12  # pt between a number and its column label centre
 MAX_NAME_DISTANCE = 12  # pt between the bib and the athlete name (vertical)
@@ -83,13 +86,15 @@ def _page_rows(page: pymupdf.Page, page_number: int, name: str) -> list[dict[str
     bottom = min(footer_tops) if footer_tops else page.rect.height
 
     labels = {"Bib": _centre(bib_label)}
-    name_left = None
+    name_labels = []
     for word in words:
         same_header = abs(word[1] - bib_label[1]) < 15
         if word[4].upper() in ("START", "ORD.", "ORDER") and same_header and word[2] < bib_label[0]:
             labels["Start Order"] = _centre(word)
-        if word[4].upper() == "NAME" and abs(word[1] - bib_label[1]) < 3:
-            name_left = word[0]
+        # Swiss Timing until 2023: 'Name' one header line above 'Bib'.
+        if word[4].upper() == "NAME" and same_header:
+            name_labels.append(word)
+    name_left = min(name_labels, key=lambda word: abs(word[1] - bib_label[1]))[0] if name_labels else None
     if name_left is None:
         raise StartListError(f"{name}: page {page_number}: NAME column not found.")
 

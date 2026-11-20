@@ -425,8 +425,11 @@ def write_ranglisten_sheet(workbook: Workbook, rows: list[dict[str, Any]]) -> No
     worksheet.auto_filter.ref = worksheet.dimensions
 
 
-def competition_file_name(values: Sequence[dict[str, Any]]) -> str:
-    """Return e.g. '2026-09-13 FCM Einsiedeln HS117' from the Daten values."""
+def competition_file_name(values: Sequence[dict[str, Any]], hill_ids: dict[str, str] | None = None) -> str:
+    """Return e.g. '2026-09-13 FCM Einsiedeln HS117' from the Daten values.
+
+    hill_ids maps the hill of the PDFs ('Lake Placid/ORDA HS128') to its
+    SchanzenID in Liste_Schanzen_ID ('Lake Placid HS128')."""
     if not values:
         raise RanglistenError("no PDFs for the file name.")
     dates = [value.get("Datum") for value in values]
@@ -449,7 +452,9 @@ def competition_file_name(values: Sequence[dict[str, Any]]) -> str:
     place = re.sub(r"\s*\([A-Z]{3}\)\s*$", "", str(single("Place"))).strip()
     hill_size = single("Hill Size")
     hill_size = int(hill_size) if float(hill_size).is_integer() else hill_size
-    name = f"{max(dates).isoformat()} {code}{gender} {place} HS{hill_size}"
+    hill = f"{place} HS{hill_size}"
+    hill = (hill_ids or {}).get(hill, hill)
+    name = f"{max(dates).isoformat()} {code}{gender} {hill}"
     if re.search(r'[<>:"/\\|?*]', name):
         raise RanglistenError(f"invalid file name '{name}'.")
     return name

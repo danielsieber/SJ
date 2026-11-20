@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from copy import copy
 from datetime import date, datetime, time, timedelta
 import re
@@ -93,6 +94,8 @@ GRAY_ROWS = tuple(
     DATA_ROWS.index(key) + 2 for key in ("DG 1", "DG 2", "DG 3", "Footer Datum")
 )
 DGW_ROW = "Pts / Gate DGW"
+READABLE_ROW = "PDF readable"
+READABLE_FONT = {"yes": Font(color="FF00B050", bold=True), "no": Font(color="FFC00000", bold=True)}
 
 
 def default_pdf_directory() -> Path:
@@ -213,12 +216,16 @@ def _document_paths(extracted: Sequence[tuple[Path, dict]]) -> list[Path]:
 
 def _add_result_sheets(
     workbook: Workbook, extracted: Sequence[tuple[Path, dict]], warnings: list[str]
-) -> list[PdfResults] | None:
-    """Add one sheet per PDF (RL1 and start lists included); None if any PDF failed.
+) -> tuple[list[PdfResults], list[str]]:
+    """Add one sheet per PDF (RL1 and start lists included).
 
+    Return the readable results and the names of the PDFs that could not be
+    read (error sheet). An unreadable RL1 or start list does not drop its
+    competition: the rounds are then ordered without it (with a warning).
     Sheet order of a competition: SLR1, RL1, SLRF, RL.
     """
-    pdf_results: list[PdfResults] | None = []
+    pdf_results: list[PdfResults] = []
+    failed: list[str] = []
     for pdf_path, _values in extracted:
         if re.search(r"\dRL1$", pdf_path.stem, re.I):
             continue  # read together with its RL PDF
@@ -226,27 +233,54 @@ def _add_result_sheets(
         first_round_stem = first_round_rows = None
         first_round_path = _first_round_path(pdf_path)
         start_order_1, ok_1 = _read_start_order(first_list, workbook, warnings)
+        if not ok_1:
+            failed.append(first_list.stem)
         if first_round_path is not None:
-            first_round_stem = first_round_path.stem
             first_round_rows = _read_results(first_round_path, workbook, warnings)
             if first_round_rows is None:
-                pdf_results = None
+                failed.append(first_round_path.stem)
+            else:
+                first_round_stem = first_round_path.stem
         start_order_2, ok_2 = _read_start_order(final_list, workbook, warnings)
+        if not ok_2:
+            failed.append(final_list.stem)
         rows = _read_results(pdf_path, workbook, warnings)
-        if rows is not None and any(row.get(TEAM_KEY) for row in rows):
-            # Team events: the later groups of a start list have no start order
-            # yet; without it the rounds are ordered by the team standings.
-            ok_1 = ok_2 = True
-        if rows is None or not (ok_1 and ok_2):
-            pdf_results = None
-        if pdf_results is not None:
-            pdf_results.append(
-                PdfResults(
-                    pdf_path.stem, rows, first_round_stem, first_round_rows,
-                    start_order_1, start_order_2,
-                )
+        if rows is None:
+            failed.append(pdf_path.stem)
+            continue
+        pdf_results.append(
+            PdfResults(
+                pdf_path.stem, rows, first_round_stem, first_round_rows,
+                start_order_1, start_order_2,
             )
-    return pdf_results
+        )
+    return pdf_results, failed
+
+
+LIST_GENDERS = {"M": "MEN", "F": "WOMEN", "W": "WOMEN"}  # column Gender of Liste_Springer_ID
+
+
+def _gender_from_jumpers(pdf_results: Sequence[PdfResults], listen: SjListen) -> str | None:
+    """Gender of a competition whose PDFs name none (Swiss Timing until 2023):
+    of its athletes listed in Liste_Springer_ID. MIXED when the smaller group
+    has at least a quarter of the athletes (a single wrong entry does not count)."""
+    genders: dict[str, str] = {}  # JumperID -> gender
+    for result in pdf_results:
+        for row in [*result.rows, *(result.first_round_rows or [])]:
+            if row.get(TEAM_KEY):
+                continue
+            jumper_id, _problem = listen.resolve(row.get("Name"), row.get("NSA"))
+            if jumper_id is None or jumper_id in genders:
+                continue
+            found = {LIST_GENDERS[j.gender] for j in listen.by_jumper_id(jumper_id) if j.gender in LIST_GENDERS}
+            if len(found) == 1:
+                genders[jumper_id] = found.pop()
+    counts = Counter(genders.values()).most_common()
+    if not counts:
+        return None
+    if len(counts) > 1 and counts[1][1] >= len(genders) / 4:
+        return "MIXED"
+    return counts[0][0]
 
 
 def _read_listen(listen_file: Path | None, notes: list[Note]) -> SjListen | None:
@@ -285,7 +319,8 @@ def _add_hill_values(
             ))
         else:
             values[DGW_ROW] = listen.dgw(hill)
-            found[hill] = values[DGW_ROW]
+            hill_id = listen.hill_id(hill)
+            found[hill if hill_id == hill else f"{hill_id} (im PDF {hill})"] = values[DGW_ROW]
     for hill in missing:
         notes.append(Note(
             "Warnung", f"Daten: SchanzenID {hill} fehlt in Liste_Schanzen_ID (SJ-Listen.xlsm)."
@@ -370,16 +405,17 @@ def _add_jump_times(
 
 def _add_ranglisten(
     workbook: Workbook,
-    pdf_results: list[PdfResults] | None,
+    pdf_results: list[PdfResults],
     competition: str | None,
     warnings: list[str],
     listen: SjListen | None = None,
     notes: list[Note] | None = None,
     values_by_stem: dict[str, dict] | None = None,
+    failed: Sequence[str] = (),
 ) -> None:
     message = None
-    if pdf_results is None:
-        message = "not created because the results of at least one PDF could not be read."
+    if not pdf_results:
+        message = "not created because the results of no PDF could be read."
     elif competition is None:
         message = "not created because the competition name (first part of JumpID) is unknown."
     if message is not None:
@@ -395,6 +431,10 @@ def _add_ranglisten(
         workbook.move_sheet(RANGLISTEN_SHEET, 1 - workbook.sheetnames.index(RANGLISTEN_SHEET))
         return
     warnings.extend(ranglisten_warnings)
+    if failed:
+        warnings.append(
+            f"{RANGLISTEN_SHEET}: without the PDFs that could not be read ({', '.join(failed)})."
+        )
     _add_jumper_ids(rows, listen, notes if notes is not None else [])
     _add_jump_times(rows, values_by_stem or {}, warnings)
     write_ranglisten_sheet(workbook, rows)
@@ -446,31 +486,41 @@ def create_workbook(
             workbook.save(output_file)
             raise FileNotFoundError(message)
 
-        try:
-            extracted = [
-                (pdf_path, extract_data(pdf_path))
-                for pdf_path in pdf_paths
-            ]
-            extracted.sort(key=lambda item: _sort_key(item[1]))
-            # The RL1 column stands directly before its RL column.
-            with_first_rounds = []
-            for pdf_path, values in extracted:
-                first_round_path = _first_round_path(pdf_path)
-                if first_round_path is not None:
-                    with_first_rounds.append((first_round_path, extract_data(first_round_path)))
-                with_first_rounds.append((pdf_path, values))
-            extracted = with_first_rounds
-            if place:
-                for _path, values in extracted:
-                    if not re.search(r"\([A-Z]{3}\)", str(values.get("Place") or "")):
-                        values["Place"] = place
-        except PdfParseError as error:
-            pdfs = [(path, None) for path in pdf_paths]
-            write_notes_sheet(workbook, created, pdfs, [Note("Fehler", str(error))])
-            workbook.save(output_file)
-            raise
-
+        # A PDF without readable data (e.g. a scan without text) is left out.
         warnings: list[str] = []
+        unreadable: list[Path] = []
+
+        def data_of(pdf_path: Path) -> dict | None:
+            try:
+                return extract_data(pdf_path)
+            except PdfParseError as error:
+                warnings.append(str(error))
+                unreadable.append(pdf_path)
+                return None
+
+        extracted = [(path, values) for path in pdf_paths if (values := data_of(path)) is not None]
+        if not extracted:
+            pdfs = [(path, None) for path in pdf_paths]
+            notes = [Note("Fehler", warning) for warning in warnings]
+            write_notes_sheet(workbook, created, pdfs, notes, failed=[path.stem for path in pdf_paths])
+            workbook.save(output_file)
+            raise PdfParseError(warnings[0] if len(warnings) == 1 else "; ".join(warnings))
+        extracted.sort(key=lambda item: _sort_key(item[1]))
+        # The RL1 column stands directly before its RL column.
+        with_first_rounds = []
+        for pdf_path, values in extracted:
+            first_round_path = _first_round_path(pdf_path)
+            if first_round_path is not None:
+                first_round_values = data_of(first_round_path)
+                if first_round_values is not None:
+                    with_first_rounds.append((first_round_path, first_round_values))
+            with_first_rounds.append((pdf_path, values))
+        extracted = with_first_rounds
+        if place:
+            for _path, values in extracted:
+                if not re.search(r"\([A-Z]{3}\)", str(values.get("Place") or "")):
+                    values["Place"] = place
+
         listen_notes: list[Note] = []  # SJ-Listen: hill first, then jumpers
         listen = _read_listen(listen_file, listen_notes)
         _add_hill_values(extracted, listen, listen_notes)
@@ -515,7 +565,7 @@ def create_workbook(
                 ]
                 if missing:
                     notes.append(Note("Info", f"Kein FIS-Link in pdf_links.csv für {', '.join(missing)}."))
-        pdf_links = [(path, links.get(path.name)) for path in documents]
+        pdf_links = [(path, links.get(path.name)) for path in documents + unreadable]
         for column, (path, _values) in enumerate(extracted, start=2):
             url = links.get(path.name)
             if url:
@@ -533,21 +583,46 @@ def create_workbook(
             for cell in worksheet[row]:
                 cell.fill = SECTION_FILL
 
+        pdf_results, failed = _add_result_sheets(workbook, extracted, warnings)
+        failed = [path.stem for path in unreadable] + failed
+        readable_row = DATA_ROWS.index(READABLE_ROW) + 2
+        for column, (path, _values) in enumerate(extracted, start=2):
+            value = "no" if path.stem in failed else "yes"
+            cell = worksheet.cell(row=readable_row, column=column, value=value)
+            cell.font = READABLE_FONT[value]
+            cell.fill = UNAVAILABLE_FIELD_FILL if value == "no" else PatternFill(fill_type=None)
+        if listen is not None and pdf_results and any(not values.get("Gender") for _p, values in extracted):
+            gender = _gender_from_jumpers(pdf_results, listen)
+            if gender is not None:
+                gender_row = DATA_ROWS.index("Gender") + 2
+                for column, (_path, values) in enumerate(extracted, start=2):
+                    if not values.get("Gender"):
+                        values["Gender"] = gender
+                        cell = worksheet.cell(row=gender_row, column=column, value=gender)
+                        cell.fill = PatternFill(fill_type=None)
+                listen_notes.append(Note(
+                    "Info", f"Gender {gender} aus Liste_Springer_ID (im PDF nicht angegeben)."
+                ))
         if competition is not None:
             name = competition
         else:
             try:
-                name = competition_file_name([values for _path, values in extracted])
+                hill_ids = {}
+                if listen is not None:
+                    for _path, values in extracted:
+                        hill = hill_name(values.get("Place"), values.get("Hill Size"))
+                        if listen.hill_id(hill):
+                            hill_ids[hill] = listen.hill_id(hill)
+                name = competition_file_name([values for _path, values in extracted], hill_ids)
             except RanglistenError as error:
                 name = None
                 warnings.append(f"No competition copy saved: {error}")
-        pdf_results = _add_result_sheets(workbook, extracted, warnings)
         _add_ranglisten(
             workbook, pdf_results, name, warnings, listen, listen_notes,
-            {path.stem: values for path, values in extracted},
+            {path.stem: values for path, values in extracted}, failed,
         )
 
-        worksheet.freeze_panes = "B12"
+        worksheet.freeze_panes = "B13"
         worksheet.column_dimensions["A"].width = 20
         for column in range(2, len(extracted) + 2):
             worksheet.column_dimensions[
@@ -557,7 +632,7 @@ def create_workbook(
         notes = [Note("Warnung", warning) for warning in warnings] + listen_notes + notes
         warnings = warnings + [note.message for note in listen_notes if note.kind == "Warnung"]
         copy_name = f"{name}.xlsx" if name is not None and save_copy else None
-        write_notes_sheet(workbook, created, pdf_links, notes, copy_name)
+        write_notes_sheet(workbook, created, pdf_links, notes, copy_name, failed)
         workbook.save(output_file)
         if copy_name is not None:
             workbook.save(output_file.with_name(copy_name))

@@ -1,10 +1,14 @@
 """Check jumpers and hills against SJ-Listen.xlsm.
 
 - Liste_Springer_ID (table from the row with the header 'JumperID'): every
-  jumper of the sheet Ranglisten must be listed. A jumper is found by name
-  and NSA; the JumperID comes from the list.
+  jumper of the sheet Ranglisten must be listed. The JumperID is built by the
+  rule from name and NSA of the PDF and looked up in the column JumperID_pdf
+  (spelling of the PDFs, e.g. 'HAYBOE MICHAE' without NSA); the column
+  JumperID gives the ID used (several PDF spellings, one jumper).
 - Liste_Schanzen_ID (header row with 'SchanzenID'): the hill of each PDF
-  ('Einsiedeln HS117', built from Place and Hill Size) gives the value
+  ('Einsiedeln HS117', built from Place and Hill Size) is looked up in the
+  column SchanzenID_pdf (spelling of the PDFs) and gives the SchanzenID
+  (name of the hill, used for the file and competition name) and the value
   'Pts / Gate für DGW'.
 
 The workbook is only read (openpyxl, cached values of formulas), so it may be
@@ -48,6 +52,10 @@ class Jumper:
     name: str
     nsa: str
     fis_code: Any
+    gender: str | None = None  # 'M' or 'F' (column Gender)
+    pdf_id: str | None = None  # column JumperID_pdf (default: the JumperID)
+    dob: Any = None
+    year: Any = None  # column JG
 
 
 @dataclass
@@ -56,6 +64,8 @@ class SjListen:
     hill_dgw: dict[str, Any] = field(default_factory=dict)
     jumpers: list[Jumper] = field(default_factory=list)
     hills: dict[str, str] = field(default_factory=dict)  # key -> SchanzenID as written
+    # JumperID_pdf -> JumperID where they differ ('HAYBOE MICHAE' -> 'AUT HAYBOE MICHAE').
+    pdf_jumper_ids: dict[str, str] = field(default_factory=dict)
 
     def all_by_fis_code(self, fis_code: Any) -> list[Jumper]:
         """All entries with this FIS code (a name change may be listed twice)."""
@@ -82,6 +92,9 @@ class SjListen:
         looked up (special IDs such as 'ITA DEL LUCREZ').
         """
         rule_id = proposed_jumper_id(name, nsa)
+        alias = self.pdf_jumper_ids.get(_key(rule_id))
+        if alias is not None:  # other spelling of the PDFs (column JumperID_pdf)
+            return alias, None
         listed = self.by_jumper_id(rule_id)
         if any(_first_word(jumper.name) == _first_word(name) for jumper in listed):
             return listed[0].jumper_id, None
@@ -124,6 +137,10 @@ class SjListen:
     def dgw(self, hill: str) -> Any:
         return self.hill_dgw.get(_key(hill))
 
+    def hill_id(self, hill: str | None) -> str | None:
+        """SchanzenID (column SchanzenID) of a hill built from a PDF (column SchanzenID_pdf)."""
+        return self.hills.get(_key(hill)) if hill else None
+
 
 ID_LETTERS = 6  # letters taken from the first and the second word of the name
 
@@ -159,7 +176,7 @@ def _table(workbook, sheet_name: str, key_header: str) -> tuple[dict[str, int], 
         raise ListenError(f"Sheet {sheet_name} fehlt in {SJ_LISTEN_FILE.name}.")
     rows = workbook[sheet_name].iter_rows(values_only=True)
     for row in rows:
-        if row and _key(row[0]) == _key(key_header):
+        if row and any(_key(value) == _key(key_header) for value in row):
             # Headers may contain line breaks ('Pts / Gate \nfür DGW').
             columns = {_key(value): index for index, value in enumerate(row) if value}
             return columns, rows
@@ -182,27 +199,45 @@ def read_sj_listen(path: Path) -> SjListen:
         for needed in ("name", "nsa"):
             if needed not in columns:
                 raise ListenError(f"Spalte {needed.capitalize()} fehlt im Sheet {JUMPER_SHEET}.")
-        fis_column = columns.get("fis_code")
+        def value(row, header):
+            column = columns.get(header)
+            return row[column] if column is not None and column < len(row) else None
+
         for row in rows:
-            jumper_id = row[0]
+            jumper_id = " ".join(str(value(row, "jumperid") or "").split())
             if jumper_id:
-                key = (_key(row[columns["name"]]), _key(row[columns["nsa"]]))
-                listen.jumper_ids[key] = str(jumper_id).strip()
+                pdf_id = " ".join(str(value(row, "jumperid_pdf") or "").split()) or jumper_id
+                if _key(pdf_id) != _key(jumper_id):
+                    listen.pdf_jumper_ids.setdefault(_key(pdf_id), jumper_id)
+                key = (_key(value(row, "name")), _key(value(row, "nsa")))
+                listen.jumper_ids.setdefault(key, jumper_id)
+                gender = value(row, "gender")
                 listen.jumpers.append(Jumper(
-                    str(jumper_id).strip(),
-                    str(row[columns["name"]] or ""),
-                    str(row[columns["nsa"]] or ""),
-                    row[fis_column] if fis_column is not None else None,
+                    jumper_id,
+                    str(value(row, "name") or ""),
+                    str(value(row, "nsa") or ""),
+                    value(row, "fis_code"),
+                    str(gender).strip().upper() if gender else None,
+                    pdf_id, value(row, "dob"), value(row, "jg"),
                 ))
 
         columns, rows = _table(workbook, HILL_SHEET, "SchanzenID")
         dgw_column = columns.get(_key(DGW_HEADER))
         if dgw_column is None:
             raise ListenError(f"Spalte '{DGW_HEADER}' fehlt im Sheet {HILL_SHEET}.")
+        # SchanzenID_pdf: the hill as built from a PDF ('Lake Placid/ORDA HS128');
+        # SchanzenID: the name used for it (several PDF spellings, one hill).
+        id_column = columns["schanzenid"]
+        pdf_column = columns.get("schanzenid_pdf")
         for row in rows:
-            if row and row[0]:
-                listen.hill_dgw[_key(row[0])] = row[dgw_column]
-                listen.hills[_key(row[0])] = str(row[0])
+            if not row or len(row) <= id_column:
+                continue
+            hill_id = " ".join(str(row[id_column] or "").split())
+            pdf_id = row[pdf_column] if pdf_column is not None and len(row) > pdf_column else None
+            for key in (pdf_id, hill_id):
+                if key and hill_id:
+                    listen.hill_dgw.setdefault(_key(key), row[dgw_column])
+                    listen.hills.setdefault(_key(key), hill_id)
         return listen
     finally:
         workbook.close()

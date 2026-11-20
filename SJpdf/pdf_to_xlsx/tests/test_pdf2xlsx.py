@@ -333,17 +333,19 @@ class WorkbookTests(unittest.TestCase):
             self.assertEqual(worksheet["B2"].value, "FIS SKI JUMPING GRAND PRIX")
             self.assertEqual(worksheet["A4"].value, "Datum")
             self.assertEqual(worksheet["B4"].number_format, "yyyy-mm-dd")
-            self.assertEqual(worksheet["A19"].value, "Pts / Gate DGW")
-            self.assertEqual(worksheet["A20"].value, "DG 1")
-            self.assertEqual(worksheet["A25"].value, "Length 1")
-            self.assertEqual(worksheet["A50"].value, "Footer Datum")
-            self.assertEqual(worksheet["A52"].value, "Footer Codex")
+            self.assertEqual(worksheet["A20"].value, "Pts / Gate DGW")
+            self.assertEqual(worksheet["A21"].value, "DG 1")
+            self.assertEqual(worksheet["A26"].value, "Length 1")
+            self.assertEqual(worksheet["A51"].value, "Footer Datum")
+            self.assertEqual(worksheet["A53"].value, "Footer Codex")
             self.assertEqual(worksheet["A1"].alignment.horizontal, "left")
             self.assertEqual(worksheet["B4"].alignment.horizontal, "left")
             self.assertEqual(worksheet["A11"].font.color.rgb, "FF0000FF")
             self.assertEqual(worksheet["B11"].font.color.rgb, "FF0000FF")
-            self.assertEqual(worksheet.freeze_panes, "B12")
-            for row in (20, 30, 40, 50):
+            self.assertEqual(worksheet["A12"].value, "PDF readable")
+            self.assertEqual(worksheet["B12"].value, "yes")
+            self.assertEqual(worksheet.freeze_panes, "B13")
+            for row in (21, 31, 41, 51):
                 self.assertEqual(worksheet.cell(row=row, column=1).fill.fgColor.rgb, "FFD9D9D9")
             self.assertEqual(worksheet.max_column, 2)
             workbook.close()
@@ -488,3 +490,95 @@ class WorkbookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PartlyReadableTests(unittest.TestCase):
+    """One unreadable PDF does not stop the others: Ranglisten is built from
+    the readable PDFs, Notes lists which PDFs were read and which not."""
+
+    def test_unreadable_pdfs_are_left_out(self):
+        from pdf_to_xlsx.pdf2xlsx_Resultate import ResultsParseError
+
+        def results(path):
+            if path.stem.endswith("RL"):
+                raise ResultsParseError(f"{path.name}: result check failed")
+            return []
+
+        def data(path):
+            if path.stem.endswith("RLQ"):
+                raise PdfParseError(f"{path.name}: no text")
+            return extract_data_from_text(SAMPLE_TEXT)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            folder = Path(temporary_directory)
+            output_file = folder / "results.xlsx"
+            pdfs = [folder / f"2027JP0276{suffix}.pdf" for suffix in ("RLT", "RLQ", "RL")]
+            with (
+                patch("pdf_to_xlsx.pdf2xlsx.extract_data", side_effect=data),
+                patch("pdf_to_xlsx.pdf2xlsx.extract_results", side_effect=results),
+            ):
+                warnings = create_workbook(pdfs, output_file, None, competition="Test", save_copy=False)
+
+            self.assertIn("2027JP0276RLQ.pdf: no text", warnings)
+            self.assertTrue(any("without the PDFs that could not be read" in w for w in warnings))
+            workbook = load_workbook(output_file)
+            self.assertNotIn("not created", str(workbook["Ranglisten"]["A1"].value))
+            self.assertNotIn("2027JP0276RLQ", workbook.sheetnames)
+            notes = workbook["Notes"]
+            rows = {notes.cell(row=row, column=1).value: notes.cell(row=row, column=2) for row in range(3, 11)}
+            self.assertEqual(rows["Anzahl PDFs"].value, 3)
+            self.assertEqual(rows["Gelesen"].value, "1: 2027JP0276RLT")
+            self.assertEqual(rows["Nicht gelesen"].value, "2: 2027JP0276RLQ, 2027JP0276RL")
+            self.assertEqual(rows["Nicht gelesen"].fill.fgColor.rgb, "FFFFC7CE")
+            daten = workbook["Daten"]
+            readable = {daten.cell(row=1, column=c).value: daten.cell(row=12, column=c).value for c in range(2, daten.max_column + 1)}
+            self.assertEqual(daten["A12"].value, "PDF readable")
+            self.assertEqual(readable, {"2027JP0276RLT": "yes", "2027JP0276RL": "no"})
+            workbook.close()
+
+    def test_no_readable_pdf_raises(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            folder = Path(temporary_directory)
+            with patch("pdf_to_xlsx.pdf2xlsx.extract_data", side_effect=PdfParseError("x.pdf: no text")):
+                with self.assertRaises(PdfParseError):
+                    create_workbook([folder / "2027JP0276RL.pdf"], folder / "out.xlsx", None)
+
+
+class OldSwissTimingHeaderTests(unittest.TestCase):
+    def test_place_above_the_date_line(self):
+        # Until 2023 the place stands above the date; below it the start list
+        # begins with a club 'ASVOE Nordic Team Salzkammergut (NTS)'.
+        values = extract_data_from_text(
+            "FIS Continental Cup Ski Jumping Men\n5th Continental Cup Competition\n"
+            "Engelberg (SUI)\nLARGE HILL INDIVIDUAL TUE 27 DEC 2022\nSTART: 15:45\n"
+            "STARTLIST 1ST ROUND\nSTEINER Maximilian ASVOE Nordic Team Salzkammergut (NTS)\n"
+            "Hill Size / (95%) 140 m (133.0 m)\n"
+        )
+        self.assertEqual(values["Place"], "Engelberg (SUI)")
+        self.assertEqual(values["Competition"], "5th Continental Cup Competition")
+        self.assertEqual(values["Hill"], "LARGE HILL INDIVIDUAL")
+        self.assertEqual(values["Gender"], "MEN")
+
+    def test_universiade_without_place_is_not_an_official(self):
+        # Almaty 2017: no 'Place (KAZ)' in the header, only the jury list.
+        jury = (
+            "Jury / Competition Management Judges Hill Data / Calculation\n"
+            "FIS Technical Delegate (TD) JELENSKY Jan (SVK) A STAHLHUT Erik (GER) Hill Size HS (95%) 106m (100.5m)\n"
+            "FISU Technical Delegate GANZENHUBER Paul (AUT)\n"
+        )
+        for head in ("Mixed Team\n1st Round\nSAT 4 FEB 2017\nStart Time 18:04 / End Time 18:55\nUnofficial Results\n",
+                     "Mixed Team\nSAT 4 FEB 2017\nStart Time 18:04 / End Time 19:35\nResults\n"):
+            values = extract_data_from_text("Sunkar International Ski Jumping Complex Ski Jumping\n" + head + jury)
+            self.assertIsNone(values["Place"])
+            self.assertEqual(values["Hill Size"], 106)
+
+
+class HeadGenderTests(unittest.TestCase):
+    def test_gender_from_title_lines(self):
+        from pdf_to_xlsx.pdf2xlsx_Daten import _parse_hill_and_gender
+
+        head = ["FIS Nordic Junior World Ski Championships", "Ski Jumping Ladies", "Rasnov (ROU)"]
+        self.assertEqual(_parse_hill_and_gender("NORMAL HILL INDIVIDUAL", head[0], head)[1], "WOMEN")
+        self.assertEqual(_parse_hill_and_gender("MEDIUM HILL", "OPA Games", ["OPA Games", "Girls Younger"])[1], "WOMEN")
+        # No gender printed (competitions of men, some of women): unknown.
+        self.assertIsNone(_parse_hill_and_gender("NORMAL HILL INDIVIDUAL", "FIS Cup", ["FIS Cup", "Kranj (SLO)"])[1])
