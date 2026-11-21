@@ -152,6 +152,20 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(result.check, [])
         self.assertEqual(sorted(a.name for a in result.missing), ["MUSTER Anna", "MUSTER Annina"])
 
+    def test_later_change_of_nation_is_checked_too(self):
+        # BUECHEL: first AUT (listed), later LIE with the same FIS code
+        self.listen.jumper_ids[("buechel alina", "aut")] = "AUT BUECHE ALINA"
+        self.listen.jumpers.append(Jumper("AUT BUECHE ALINA", "BUECHEL Alina", "AUT", 8284))
+        data = season.SeasonData()
+        # (None: FIS team results without nation, checked as 'LIE')
+        for nsa, label in (("AUT", "2019 FCW"), ("LIE", "2020 OPAW"), ("LIE", "2021 COCW"), (None, "2021 TEAM")):
+            season.add_athlete(data, {"fis_code": "8284", "name": "BUECHEL Alina", "nsa": nsa,
+                                      "birth_year": 2004, "competitorid": None}, label)
+        self.assertEqual([(a.nsa, a.first_competition) for a in data.athletes.values()],
+                         [("AUT", "2019 FCW"), ("LIE", "2020 OPAW"), (None, "2021 TEAM")])
+        result = season.compare(data, self.listen)
+        self.assertEqual([(a.nsa, l.jumper_id) for a, l in result.check], [("LIE", "AUT BUECHE ALINA")])
+
     def test_only_birth_year_gives_first_of_january(self):
         athlete = season.Athlete("9999", "MUSTER Anna", "SUI", 2011, None, {"F"})
         season.complete_from_biography([athlete], fetcher=None, log=lambda message: None)

@@ -55,6 +55,9 @@ Sekunden; eine ganze Saison dauert beim ersten Lauf etwa eine halbe Stunde.
 - Steht der FIS-Code unter einem anderen Namen oder einer anderen NSA in der
   Liste (z. B. nach Heirat oder Nationenwechsel), kommt er ins Sheet
   `Prüfen`, nicht zu den fehlenden.
+- Jede Schreibweise und NSA eines Springers wird geprüft, nicht nur die des
+  ersten Wettkampfs: Wechselt ein Springer später Namen oder Nation, erscheint
+  er mit dem ersten Wettkampf unter der neuen Schreibweise.
 - Die SchanzenID ist `Ort HSxxx` (Ort aus dem PDF ohne Land, z. B.
   `Einsiedeln HS117`) und wird mit den Spalten `SchanzenID_pdf` und
   `SchanzenID` von `Liste_Schanzen_ID` verglichen. `Fehlende_SchanzenID`

@@ -75,7 +75,10 @@ def _page_rows(page: pymupdf.Page, page_number: int, name: str) -> list[dict[str
         (word for word in words if word[4].upper() in ("BIB", "STNR", "STNR-P")  # StNr: WinSpringen
          # a column label has NAME next to it; not 'REVISED Bib 33 added'
          and any(other[4].upper() in ("NAME", "NAMEN") and abs(other[1] - word[1]) < 15
-                 and 0 <= other[0] - word[2] < 400 for other in words)),
+                 and 0 <= other[0] - word[2] < 400 for other in words)
+         # nor a remark 'Bib # 1 Name changed', 'Bib #101 now #100'
+         and not any(other[4].startswith("#") and abs(other[1] - word[1]) < 2
+                     and 0 <= other[0] - word[2] < 15 for other in words)),
         key=lambda word: word[0],
     )
     if not bib_labels:
@@ -172,6 +175,10 @@ def _column_rows(page: pymupdf.Page, words, spans, bib_label, page_number: int, 
         if not names:
             # Name in capitals only ('BARKATS BRANDINA DAVID'): the span at the NAME label.
             names = [span for span in column if abs(span["bbox"][0] - name_left) < 3]
+        if not names:
+            # Olympics 2022: initials only, after the bib in one text ('22 TROFIMOV RS').
+            names = [span for span in column
+                     if re.fullmatch(r"[A-Z][A-Z'’\-]+(?: [A-Z][A-Z'’\-]+)* [A-Z]{1,3}", span["text"])]
         if not names:
             raise StartListError(f"{name}: page {page_number}: no name for bib {word[4]}.")
         athlete = min(names, key=lambda span: abs(_middle(span["bbox"]) - y))

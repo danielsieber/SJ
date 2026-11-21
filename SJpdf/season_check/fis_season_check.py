@@ -317,7 +317,8 @@ def pdf_text(content: bytes) -> str:
 
 @dataclass
 class SeasonData:
-    athletes: dict[str, Athlete] = field(default_factory=dict)  # by FIS code
+    # by FIS code, name and NSA: each spelling and nation of a jumper is checked
+    athletes: dict[tuple[str, str, str], Athlete] = field(default_factory=dict)
     hills: dict[str, Hill] = field(default_factory=dict)  # by key of SchanzenID
     competitions: int = 0
     problems: list[str] = field(default_factory=list)
@@ -393,13 +394,7 @@ def collect_season(
                     "ohne Einzelnamen oder Resultat fehlt)."
                 )
             for found in found_athletes:
-                athlete = data.athletes.get(found["fis_code"])
-                if athlete is None:
-                    athlete = Athlete(
-                        found["fis_code"], found["name"], found["nsa"], found["birth_year"],
-                        found["competitorid"], first_competition=label,
-                    )
-                    data.athletes[found["fis_code"]] = athlete
+                athlete = add_athlete(data, found, label)
                 if record["gender"] in FIS_GENDER:
                     athlete.genders.add(FIS_GENDER[record["gender"]])
                 person = people.get((_key(found["name"]), _key(found["nsa"])))
@@ -415,6 +410,24 @@ class Comparison:
     missing_hills: list[Hill]
 
 
+def add_athlete(data: SeasonData, found: dict[str, Any], label: str) -> Athlete:
+    """The athlete of a FIS results page, once per FIS code, name and NSA.
+
+    A name change or a change of nation ('BUECHEL Alina' AUT -> LIE) is a new
+    entry with its own first competition, so a later spelling is checked
+    against SJ-Listen too, not only the one of the first competition.
+    """
+    key = (found["fis_code"], _key(found["name"]), _key(found["nsa"]))
+    athlete = data.athletes.get(key)
+    if athlete is None:
+        athlete = Athlete(
+            found["fis_code"], found["name"], found["nsa"], found["birth_year"],
+            found["competitorid"], first_competition=label,
+        )
+        data.athletes[key] = athlete
+    return athlete
+
+
 def compare(data: SeasonData, listen: SjListen) -> Comparison:
     """An athlete is listed when name and NSA are in Liste_Springer_ID, or when
     an entry with the same FIS code has the JumperID the rule gives for the
@@ -423,7 +436,12 @@ def compare(data: SeasonData, listen: SjListen) -> Comparison:
     JumperID (name change, other spelling) goes to 'Prüfen'.
     """
     missing, check = [], []
+    # Team results at FIS have no nation: such an entry is checked with the
+    # nation where the same name also appears with one.
+    with_nsa = {(athlete.fis_code, _key(athlete.name)) for athlete in data.athletes.values() if athlete.nsa}
     for athlete in data.athletes.values():
+        if not athlete.nsa and (athlete.fis_code, _key(athlete.name)) in with_nsa:
+            continue
         if listen.jumper_id(athlete.name, athlete.nsa) is not None:
             continue
         same_code = listen.all_by_fis_code(athlete.fis_code)
@@ -559,7 +577,7 @@ def write_workbook(result: Comparison, listen: SjListen, season: int, data: Seas
         ("Saison", season),
         ("Erstellt", datetime.now().replace(microsecond=0)),
         ("Wettkämpfe", data.competitions),
-        ("Springer in der Saison", len(data.athletes)),
+        ("Springer in der Saison", len({athlete.fis_code for athlete in data.athletes.values()})),
         ("Fehlende JumperID", len(result.missing)),
         ("FIS-Code mit anderem Namen/NSA (Prüfen)", len(result.check)),
         ("Schanzen in der Saison", len(data.hills)),
